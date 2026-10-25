@@ -1,14 +1,13 @@
 """MoveMatch -- Flask orchestrator.
 
-Generates a random challenge, routes the uploaded/recorded clip through the VSS
-perception path (VLM captions + text-NIM reasoning, see vss.py), and stores the
-winner (plus a boxed snapshot) for the leaderboard.
+Serves the dance scripts, routes the recorded clip through local YOLO pose (yolo.py),
+scores every player's timing against the script (dance.py), and stores the scores
+(plus a boxed winner snapshot) for the leaderboard.
 """
 
 import json
 import logging
 import os
-import random
 import shutil
 import sqlite3
 import subprocess
@@ -21,10 +20,9 @@ from flask import Flask, render_template, request, flash, redirect, url_for, g
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
-import vss
+import dance
 import yolo
-from models import MOVE_POOL, GameResult, move_emoji
-from vss import find_winner, fetch_cv_metadata, start_order, winner_snapshot_cv
+from models import GameResult, Script
 
 log = logging.getLogger(__name__)
 
@@ -37,20 +35,15 @@ DB_PATH = BASE_DIR / "movematch.db"
 
 ALLOWED_EXT = {"mp4", "mov", "avi", "mkv", "webm"}
 MAX_MB = 50
-CHUNK_DURATION = 1
-CHUNK_OVERLAP = 0
-
-MIN_DIFFICULTY, MAX_DIFFICULTY, DEFAULT_DIFFICULTY = 1, 5, 3
-MIN_SECONDS, MAX_SECONDS, DEFAULT_SECONDS = 5, 10, 5
-
-METHODS = {"vss", "yolo"}
-DEFAULT_METHOD = "yolo"  # local pose is preferred for finding who moved first
+HIGH_SCORES = 10  # rows per script on the leaderboard
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-change-me")
 app.config["UPLOAD_FOLDER"] = str(UPLOAD_DIR)
 app.config["MAX_CONTENT_LENGTH"] = MAX_MB * 1024 * 1024
+
+dance.load_scripts()  # fail at startup on an invalid script
 
 
 def current_url_prefix() -> str:
@@ -70,10 +63,14 @@ def current_url_prefix() -> str:
     return prefix
 
 
+def move_label(move: str) -> str:
+    return yolo.ACTION_LABELS.get(move, move)
+
+
 @app.context_processor
 def inject_helpers():
-    return {"url_prefix": current_url_prefix(), "move_emoji": move_emoji,
-            "vss_available": vss.is_available()}
+    return {"url_prefix": current_url_prefix(), "move_label": move_label,
+            "scripts": dance.load_scripts()}
 
 
 # -- Database -----------------------------------------------------------------
@@ -104,7 +101,9 @@ def init_db():
             num_people    INTEGER DEFAULT 0,
             timestamp     REAL,
             method        TEXT,
-            winner_image  TEXT
+            winner_image  TEXT,
+            script_id     TEXT,
+            winner_score  INTEGER
         )
     """)
     # Migrate older databases that predate these columns.
@@ -115,9 +114,22 @@ def init_db():
         ("timestamp", "REAL"),
         ("method", "TEXT"),
         ("winner_image", "TEXT"),
+        ("script_id", "TEXT"),
+        ("winner_score", "INTEGER"),
     ]:
         if name not in cols:
             db.execute(f"ALTER TABLE games ADD COLUMN {name} {ddl}")
+    # One row per named player per game, for the per-script high scores.
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS scores (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_id     INTEGER NOT NULL REFERENCES games(id),
+            played_at   TEXT    NOT NULL,
+            script_id   TEXT    NOT NULL,
+            player_name TEXT    NOT NULL,
+            score       INTEGER NOT NULL
+        )
+    """)
     db.commit()
     db.close()
 
@@ -131,17 +143,6 @@ def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
 
 
-def generate_challenge(num_moves: int = DEFAULT_DIFFICULTY) -> list[str]:
-    return random.sample(MOVE_POOL, min(num_moves, len(MOVE_POOL)))
-
-
-def clamp_int(value, lo: int, hi: int, default: int) -> int:
-    try:
-        return max(lo, min(hi, int(value)))
-    except (TypeError, ValueError):
-        return default
-
-
 @cache
 def ffmpeg_exe() -> str:
     """System ffmpeg if on PATH, else the static binary bundled by imageio-ffmpeg."""
@@ -152,19 +153,9 @@ def ffmpeg_exe() -> str:
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def resolve_method(requested: str | None) -> str:
-    """Validate the requested detector, falling back to YOLO when the VSS
-    backend isn't reachable from this machine."""
-    method = requested if requested in METHODS else DEFAULT_METHOD
-    if method == "vss" and not vss.is_available():
-        flash("VSS backend not reachable, using YOLO pose instead.", "error")
-        method = "yolo"
-    return method
-
-
 def ensure_mp4(src: Path) -> Path:
-    """Re-encode to H.264/AAC MP4 so the VSS uploader accepts it."""
-    dst = src.with_name(src.stem + "_vst.mp4")
+    """Re-encode to H.264 MP4 with clean timestamps so OpenCV can read and seek it."""
+    dst = src.with_name(src.stem + "_h264.mp4")
     proc = subprocess.run(
         [
             ffmpeg_exe(), "-y",
@@ -198,151 +189,65 @@ def ensure_mp4(src: Path) -> Path:
     return dst
 
 
-def run_pipeline(video_path: str, moves: list[str], player_names: list[str],
-                 method: str = DEFAULT_METHOD) -> tuple[GameResult, list[str]]:
-    """Dispatch to the chosen perception path.
+def run_pipeline(video_path: str, script: Script, player_names: list[str]) -> GameResult:
+    """Local pose perception -> per-player timing scores -> winner, boxed from the
+    winner's own pose detection at their most accurate move."""
+    slots, num_people, timeline = yolo.extract_players(video_path)
+    players = dance.score_players(slots, script, player_names)
+    result = GameResult(script=script, players=players,
+                        winner=dance.pick_winner(players),
+                        num_people=num_people, timeline=timeline)
 
-    Returns ``(result, unsupported_moves)``. ``unsupported_moves`` is only ever
-    non-empty for the YOLO path, which can classify a fixed gesture set rather
-    than arbitrary free text.
-    """
-    if method == "yolo":
-        return _run_yolo(video_path, moves, player_names)
-    return _run_vss(video_path, moves, player_names), []
+    if result.has_winner:
+        winner = result.winner_player
+        best = min((h for h in winner.hits if h.offset is not None),
+                   key=lambda h: abs(h.offset))
+        t = best.at + best.offset
+        box = yolo.box_at(slots[result.winner], t)
+        if box:
+            try:
+                fname = f"{uuid.uuid4().hex}.jpg"
+                yolo.winner_snapshot_yolo(video_path, t, box, SNAPSHOT_DIR / fname,
+                                          label=f"WINNER {winner.total} pts")
+                result.winner_image = fname
+            except Exception:
+                log.warning("YOLO winner snapshot failed", exc_info=True)
 
-
-def _run_yolo(video_path: str, moves: list[str],
-              player_names: list[str]) -> tuple[GameResult, list[str]]:
-    """Local pose perception -> winner by left->right start rank, boxed from the
-    winner's own pose detection."""
-    res = yolo.find_winner(video_path, moves)
-    winner_rank = int(res.get("winner", -1))
-    timestamp = res.get("timestamp")
-    num_people = int(res.get("num_people") or 0)
-    unsupported = res.get("unsupported") or []
-
-    if timestamp is None or winner_rank < 0:
-        return GameResult(
-            moves=moves, winner_number=0, winner_name=None, timestamp=None,
-            num_people=num_people, method="yolo", winner_image=None,
-            timeline=res.get("timeline", []),
-        ), unsupported
-
-    winner_number = winner_rank + 1
-    if 0 <= winner_rank < len(player_names) and player_names[winner_rank].strip():
-        winner_name = player_names[winner_rank].strip()
-    else:
-        winner_name = f"Person {winner_number}"
-
-    winner_image = None
-    box = res.get("winner_box")
-    if box:
-        try:
-            fname = f"{uuid.uuid4().hex}.jpg"
-            yolo.winner_snapshot_yolo(video_path, timestamp, box, SNAPSHOT_DIR / fname)
-            winner_image = fname
-        except Exception:
-            log.warning("YOLO winner snapshot failed", exc_info=True)
-
-    return GameResult(
-        moves=moves, winner_number=winner_number, winner_name=winner_name,
-        timestamp=timestamp, num_people=num_people, method="yolo",
-        winner_image=winner_image, timeline=res.get("timeline", []),
-    ), unsupported
-
-
-def _run_vss(video_path: str, moves: list[str], player_names: list[str]) -> GameResult:
-    """VSS perception -> winner (tracker id), named + boxed from CV metadata.
-
-    The winner comes back as a stable tracker id. We map it to a typed name by
-    STARTING position (people ordered left-to-right by their first-seen bbox), and
-    box it straight from the tracker's own bbox so the box matches the caption.
-    """
-    res = find_winner(video_path, moves, chunk_duration=CHUNK_DURATION,
-                      chunk_overlap_duration=CHUNK_OVERLAP)
-
-    winner_id = int(res.get("winner", -1))
-    timestamp = res.get("timestamp")
-    num_people = int(res.get("num_people") or 0)
-
-    # tracker ids are 0-based (0 is a real person), so "nobody" is timestamp None.
-    if timestamp is None or winner_id < 0:
-        return GameResult(
-            moves=moves,
-            winner_number=0,
-            winner_name=None,
-            timestamp=None,
-            num_people=num_people,
-            method=res.get("method", "vss"),
-            winner_image=None,
-            timeline=res.get("timeline", []),
-        )
-
-    winner_number = 0
-    winner_name = None
-    winner_image = None
-    meta_path = None
-    try:
-        meta_path = fetch_cv_metadata(res["cv_marker"])
-        ranks, n_meta = start_order(meta_path)
-        num_people = n_meta or num_people
-        winner_number = ranks.get(winner_id, -1) + 1  # 1-based start rank; 0 if absent
-
-        idx = winner_number - 1
-        if winner_number and 0 <= idx < len(player_names) and player_names[idx].strip():
-            winner_name = player_names[idx].strip()
-        elif winner_number:
-            winner_name = f"Person {winner_number}"
-        else:
-            winner_name = f"Player {winner_id}"
-
-        fname = f"{uuid.uuid4().hex}.jpg"
-        winner_snapshot_cv(video_path, timestamp, winner_id, meta_path,
-                           SNAPSHOT_DIR / fname)
-        winner_image = fname
-    except Exception:
-        log.warning("CV winner resolution failed", exc_info=True)
-        if winner_name is None:
-            winner_name = f"Player {winner_id}"
-    finally:
-        if meta_path:
-            Path(meta_path).unlink(missing_ok=True)
-
-    return GameResult(
-        moves=moves,
-        winner_number=winner_number,
-        winner_name=winner_name,
-        timestamp=timestamp,
-        num_people=num_people,
-        method=res.get("method", "vss"),
-        winner_image=winner_image,
-        timeline=res.get("timeline", []),
-    )
+    return result
 
 
 def save_game(result: GameResult) -> None:
     db = get_db()
-    db.execute(
+    played_at = datetime.now(timezone.utc).isoformat()
+    winner = result.winner_player
+    cur = db.execute(
         """INSERT INTO games
            (played_at, challenge, winner_name, winner_number, num_people,
-            timestamp, method, winner_image)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            timestamp, method, winner_image, script_id, winner_score)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            datetime.now(timezone.utc).isoformat(),
-            json.dumps(result.moves),
-            result.winner_name,
-            result.winner_number,
+            played_at,
+            json.dumps(result.script.moves),
+            winner.name if winner else None,
+            winner.number if winner else 0,
             result.num_people,
-            result.timestamp,
-            result.method,
+            None,
+            "yolo",
             result.winner_image,
+            result.script.id,
+            winner.total if winner else None,
         ),
+    )
+    db.executemany(
+        """INSERT INTO scores (game_id, played_at, script_id, player_name, score)
+           VALUES (?, ?, ?, ?, ?)""",
+        [(cur.lastrowid, played_at, result.script.id, p.name, p.total)
+         for p in result.players if p.named],
     )
     db.commit()
 
 
-def process_upload(moves: list[str], player_names: list[str],
-                   method: str = DEFAULT_METHOD):
+def process_upload(script: Script, player_names: list[str], save: bool = True):
     """Shared POST handling: validate file, transcode, run pipeline, persist.
 
     Returns (result, error_message). Exactly one is non-None.
@@ -361,15 +266,9 @@ def process_upload(moves: list[str], player_names: list[str],
     keep = os.environ.get("KEEP_UPLOADS", "0") == "1"
     try:
         mp4_path = ensure_mp4(save_path)
-        result, unsupported = run_pipeline(str(mp4_path), moves, player_names, method)
-        if unsupported:
-            flash(
-                "YOLO can't detect these moves: "
-                + ", ".join(unsupported)
-                + ". Switch to VSS for free-text moves.",
-                "error",
-            )
-        save_game(result)
+        result = run_pipeline(str(mp4_path), script, player_names)
+        if save:
+            save_game(result)
         return result, None
     except Exception as exc:
         log.exception("Pipeline failed")
@@ -387,113 +286,85 @@ def parse_names(csv: str) -> list[str]:
     return [n.strip() for n in csv.split(",") if n.strip()]
 
 
+def script_payload() -> dict:
+    """Scripts as the browser needs them to play: steps + labels + timing."""
+    return {
+        "lead": dance.AVATAR_LEAD,
+        "scripts": {
+            s.id: {
+                "name": s.name,
+                "end": dance.end_time(s),
+                "steps": [{"move": st.move, "at": st.at, "label": move_label(st.move)}
+                          for st in s.steps],
+            }
+            for s in dance.load_scripts().values()
+        },
+    }
+
+
+def scored_page(template: str, save: bool):
+    """GET shows the form; POST scores the uploaded clip against the chosen script."""
+    source = request.form if request.method == "POST" else request.args
+    script = dance.get_script(source.get("script")) or next(iter(dance.load_scripts().values()))
+    names_csv = source.get("player_names", "")
+    result: GameResult | None = None
+
+    if request.method == "POST":
+        result, error = process_upload(script, parse_names(names_csv), save=save)
+        if error:
+            flash(error, "error")
+
+    return render_template(template, script=script, player_names=names_csv,
+                           payload=script_payload(), result=result)
+
+
 # -- Routes -------------------------------------------------------------------
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    result: GameResult | None = None
-    source = request.form if request.method == "POST" else request.args
-    difficulty = clamp_int(source.get("difficulty"), MIN_DIFFICULTY, MAX_DIFFICULTY, DEFAULT_DIFFICULTY)
-    record_seconds = clamp_int(source.get("time"), MIN_SECONDS, MAX_SECONDS, DEFAULT_SECONDS)
-    method = resolve_method(source.get("method"))
-    challenge = generate_challenge(difficulty)
+    return scored_page("index.html", save=True)
 
-    if request.method == "POST":
-        raw = request.form.get("challenge_json", "")
-        if raw:
-            try:
-                parsed = json.loads(raw)
-                if isinstance(parsed, list) and parsed:
-                    challenge = [str(m) for m in parsed]
-            except json.JSONDecodeError:
-                pass
 
-        player_names = parse_names(request.form.get("player_names", ""))
-        result, error = process_upload(challenge, player_names, method)
-        if error:
-            flash(error, "error")
-
-    return render_template(
-        "index.html",
-        challenge=challenge,
-        challenge_json=json.dumps(challenge),
-        difficulty=difficulty,
-        record_seconds=record_seconds,
-        min_difficulty=MIN_DIFFICULTY,
-        max_difficulty=MAX_DIFFICULTY,
-        min_seconds=MIN_SECONDS,
-        max_seconds=MAX_SECONDS,
-        method=method,
-        result=result,
-    )
+@app.route("/test", methods=["GET", "POST"])
+def test_page():
+    # Same scoring on an uploaded clip (its t=0 is the script's t=0); nothing saved.
+    return scored_page("test.html", save=False)
 
 
 @app.route("/leaderboard")
 def leaderboard():
     db = get_db()
-    rankings = db.execute("""
-        SELECT winner_name AS name, COUNT(*) AS wins
-        FROM games WHERE winner_name IS NOT NULL
-        GROUP BY winner_name ORDER BY wins DESC LIMIT 20
-    """).fetchall()
+    # SQLite returns the other bare columns from the row holding MAX(score), so
+    # played_at is when that best score was set.
+    high_scores = {
+        sid: db.execute("""
+            SELECT player_name AS name, MAX(score) AS score, played_at
+            FROM scores WHERE script_id = ?
+            GROUP BY player_name
+            ORDER BY score DESC, played_at ASC LIMIT ?
+        """, (sid, HIGH_SCORES)).fetchall()
+        for sid in dance.load_scripts()
+    }
 
     winners = db.execute("""
-        SELECT played_at, challenge, winner_name, method, winner_image, timestamp
+        SELECT played_at, winner_name, winner_image, script_id, winner_score
         FROM games
         WHERE winner_image IS NOT NULL
         ORDER BY id DESC LIMIT 24
     """).fetchall()
 
-    def moves_of(row):
-        try:
-            return json.loads(row["challenge"])
-        except (json.JSONDecodeError, TypeError):
-            return []
-
     gallery = [
         {
             "played_at": w["played_at"],
-            "moves": moves_of(w),
             "winner_name": w["winner_name"],
-            "method": w["method"],
             "winner_image": w["winner_image"],
-            "timestamp": w["timestamp"],
+            "script": dance.get_script(w["script_id"]),
+            "score": w["winner_score"],
         }
         for w in winners
     ]
 
-    return render_template("leaderboard.html", rankings=rankings, gallery=gallery)
-
-
-@app.route("/test", methods=["GET", "POST"])
-def test_page():
-    result: GameResult | None = None
-    method = resolve_method(request.form.get("method"))
-
-    if request.method == "POST":
-        try:
-            moves = json.loads(request.form.get("moves_json", "[]"))
-        except json.JSONDecodeError:
-            moves = []
-        moves = [str(m).strip() for m in moves if str(m).strip()]
-
-        if not moves:
-            flash("Write at least one movement.", "error")
-        else:
-            player_names = parse_names(request.form.get("player_names", ""))
-            result, error = process_upload(moves, player_names, method)
-            if error:
-                flash(error, "error")
-
-    return render_template("test.html", result=result, method=method)
-
-
-@app.route("/api/challenge", methods=["POST"])
-def api_new_challenge():
-    difficulty = clamp_int(request.values.get("difficulty"), MIN_DIFFICULTY, MAX_DIFFICULTY, DEFAULT_DIFFICULTY)
-    moves = generate_challenge(difficulty)
-    payload = {"moves": [{"name": m, "emoji": move_emoji(m)} for m in moves]}
-    return json.dumps(payload), 200, {"Content-Type": "application/json"}
+    return render_template("leaderboard.html", high_scores=high_scores, gallery=gallery)
 
 
 @app.errorhandler(413)

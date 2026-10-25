@@ -1,0 +1,21 @@
+<input type="hidden" name="script" id="script" value="{{ script.id }}">
+<div class="field-group">
+  <span class="field-label">Choreography</span>
+  <div class="script-picker">
+    {% for s in scripts.values() %}
+    <button type="button" class="script-btn {{ 'active' if s.id == script.id }}" data-script="{{ s.id }}">
+      <span class="script-name">{{ s.name }}</span>
+      <span class="script-count">{{ s.steps | length }} moves</span>
+    </button>
+    {% endfor %}
+  </div>
+</div>
+<script>
+/* -- Script picker: mirrors the choice into the hidden #script input (fires 'change') -- */
+document.querySelectorAll('.script-btn').forEach(btn => btn.addEventListener('click', () => {
+  document.querySelectorAll('.script-btn').forEach(b => b.classList.toggle('active', b === btn));
+  const field = document.getElementById('script');
+  field.value = btn.dataset.script;
+  field.dispatchEvent(new Event('change'));
+}));
+</script>

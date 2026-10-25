@@ -1,51 +1,83 @@
+{% set steps = result.script.steps %}
 <div class="result-card">
-  <!-- Challenge -->
-  <p class="result-label">Challenge</p>
-  <div class="sequence-display compact">
-    {% for move in result.moves %}
-      {% if not loop.first %}<span class="seq-arrow">&rarr;</span>{% endif %}
-      <span class="seq-step">
-        <span class="seq-emoji">{{ move_emoji(move) }}</span>
-        <span class="seq-name">{{ move }}</span>
-      </span>
-    {% endfor %}
-  </div>
+  <p class="result-label">{{ result.script.name }} &middot; {{ steps | length }} moves</p>
 
   {% if result.has_winner %}
   <div class="winner-banner">
     <span class="winner-emoji">🏆</span>
-    <span class="winner-text">{{ result.winner_name }} wins!</span>
+    <span class="winner-text">{{ result.winner_player.name }} wins!</span>
+    <span class="winner-score">{{ result.winner_player.total }} pts</span>
   </div>
+  {% else %}
+  <div class="no-winner-banner">
+    Nobody hit a move inside its window.
+  </div>
+  {% endif %}
 
   <p class="result-meta">
-    {% if result.timestamp is not none %}Finished at {{ '%.1f' | format(result.timestamp | float) }}s &middot; {% endif %}
     {{ result.num_people }} player{{ 's' if result.num_people != 1 }} seen &middot;
-    decided by
-    {% if result.method == 'yolo' %}
-    <span class="method-tag pose" title="Local YOLOv8n-pose keypoint geometry (CPU)">YOLO pose</span>
-    {% else %}
-    <span class="method-tag vss" title="VLM captions + text-NIM reasoning">VSS</span>
-    {% endif %}
+    max {{ 100 * (steps | length) }} pts
   </p>
+
+  {% if result.players %}
+  <div class="score-table-wrap">
+    <table class="score-table">
+      <thead>
+        <tr>
+          <th>Move</th>
+          <th>Beat</th>
+          {% for p in result.players %}
+          <th class="{{ 'is-winner' if loop.index0 == result.winner }}">{{ p.name }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for step in steps %}
+        {% set i = loop.index0 %}
+        <tr>
+          <td class="score-move">
+            <img src="static/avatars/{{ step.move }}.svg" alt="">
+            <span>{{ move_label(step.move) }}</span>
+          </td>
+          <td class="score-beat">{{ '%.1f' | format(step.at) }}s</td>
+          {% for p in result.players %}
+          {% set hit = p.hits[i] %}
+          <td class="score-cell rating-{{ hit.rating | lower }}">
+            <span class="score-rating">{{ hit.rating }}</span>
+            {% if hit.offset is not none %}
+            <span class="score-offset">{{ '%+.2f' | format(hit.offset) }}s</span>
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="2">Total</td>
+          {% for p in result.players %}
+          <td class="score-total {{ 'is-winner' if loop.index0 == result.winner }}">{{ p.total }}</td>
+          {% endfor %}
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  <p class="result-meta">Offset = when the move started vs the beat (negative = early).</p>
+  {% endif %}
 
   {% if result.winner_image %}
   <div class="winner-photo">
-    <img src="static/snapshots/{{ result.winner_image }}" alt="{{ result.winner_name }} boxed as the winner">
-  </div>
-  {% endif %}
-  {% else %}
-  <div class="no-winner-banner">
-    No one performed the challenge in this clip.
+    <img src="static/snapshots/{{ result.winner_image }}" alt="{{ result.winner_player.name }} boxed as the winner">
   </div>
   {% endif %}
 
   {% if result.timeline %}
   <details class="custom-builder" style="margin-top:20px">
-    <summary class="result-label" style="cursor:pointer">{{ 'Detected pose timeline' if result.method == 'yolo' else 'VSS caption timeline' }}</summary>
+    <summary class="result-label" style="cursor:pointer">Detected pose timeline</summary>
     <div class="event-timeline">
       {% for start, end, text in result.timeline %}
       <div class="timeline-event">
-        <span class="tl-time">{{ '%.0f' | format(start | float) }}&ndash;{{ '%.0f' | format(end | float) }}s</span>
+        <span class="tl-time">{{ '%.1f' | format(start | float) }}&ndash;{{ '%.1f' | format(end | float) }}s</span>
         <span class="tl-action">{{ text }}</span>
       </div>
       {% endfor %}
@@ -53,5 +85,5 @@
   </details>
   {% endif %}
 
-  <a href="{{ url_prefix }}{{ back_href | default('/') }}" class="play-again-btn">{{ back_label | default('Play again') }}</a>
+  <a href="{{ url_prefix }}{{ back_href | default('/?script=' ~ result.script.id ~ '&player_names=' ~ (player_names | urlencode)) }}" class="play-again-btn">{{ back_label | default('Dance again') }}</a>
 </div>

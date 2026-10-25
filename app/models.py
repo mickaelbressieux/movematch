@@ -3,62 +3,68 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
-# Natural-language moves the VSS path can find. Free text is fine anywhere the
-# user types their own; this pool is only what the Play page draws random
-# challenges from.
-MOVE_POOL = [
-    "cross your arms",
-    "raise one arm",
-    "put your hands on your head",
-    "crouch down",
-    "clap your hands",
-    "touch your head",
-    "wave",
-    "point at the camera",
-    "touch your knee",
-]
-
-# Best-effort emoji for display. Matched by keyword against a (free-text) move;
-# falls back to a target when nothing matches.
-_EMOJI_KEYWORDS = [
-    (("cross", "arm"), "\U0001f645"),
-    (("hands", "head"), "\U0001f646"),
-    (("touch", "head"), "\U0001f9d1"),
-    (("raise", "arm"), "\U0001f91a"),
-    (("crouch",), "\U0001f9ce"),
-    (("turn",), "\U0001f504"),
-    (("clap",), "\U0001f44f"),
-    (("jump",), "\U0001f3c3"),
-    (("wave",), "\U0001f44b"),
-    (("point",), "\U0001f449"),
-]
+@dataclass(frozen=True)
+class Step:
+    """One beat of a script: perform ``move`` (a YOLO action id) at ``at`` seconds
+    after the recording starts."""
+    move: str
+    at: float
 
 
-def move_emoji(move: str) -> str:
-    low = move.lower()
-    for keys, emoji in _EMOJI_KEYWORDS:
-        if all(k in low for k in keys):
-            return emoji
-    return "\U0001f3af"  # target
+@dataclass(frozen=True)
+class Script:
+    """A choreography: timed moves loaded from ``scripts/<id>.json`` (see dance.py)."""
+    id: str
+    name: str
+    steps: tuple[Step, ...]
+
+    @property
+    def moves(self) -> list[str]:
+        return [s.move for s in self.steps]
+
+
+@dataclass
+class MoveHit:
+    """How one player did on one step. ``offset`` is the signed delay between the
+    beat and the moment they started the move (negative = early); None = missed."""
+    move: str
+    at: float
+    offset: float | None
+    rating: str
+    points: int
+
+
+@dataclass
+class PlayerScore:
+    number: int  # 1-based, left -> right
+    name: str
+    hits: list[MoveHit]
+    named: bool = False  # name typed by the players (vs the "Person N" fallback)
+
+    @property
+    def total(self) -> int:
+        return sum(h.points for h in self.hits)
+
+    @property
+    def abs_error(self) -> float:
+        """Summed |offset| of the moves they hit (tie-breaker: lower is better)."""
+        return sum(abs(h.offset) for h in self.hits if h.offset is not None)
 
 
 @dataclass
 class GameResult:
-    """Outcome of one round: who first performed the move / completed the sequence.
-
-    Wraps the VSS path's ``{winner, timestamp, num_people}`` result, plus the
-    human-facing bits the templates need.
-    """
-    moves: list[str]
-    winner_number: int = 0
-    winner_name: str | None = None
-    timestamp: float | None = None
+    """Outcome of one dance: every detected player's per-move timing score."""
+    script: Script
+    players: list[PlayerScore] = field(default_factory=list)
+    winner: int | None = None  # index into ``players``
     num_people: int = 0
-    method: str = "vss"
     winner_image: str | None = None
     timeline: list[tuple] = field(default_factory=list)  # [(start, end, text)]
 
     @property
     def has_winner(self) -> bool:
-        # winner is a 0-based tracker id, so "nobody" is signalled by no timestamp.
-        return self.timestamp is not None
+        return self.winner is not None
+
+    @property
+    def winner_player(self) -> PlayerScore | None:
+        return self.players[self.winner] if self.has_winner else None

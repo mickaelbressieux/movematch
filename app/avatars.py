@@ -19,7 +19,6 @@ from pathlib import Path
 import numpy as np
 
 import yolo
-from models import MOVE_POOL
 from yolo import (L_ANK, L_ELB, L_HIP, L_KNE, L_SHO, L_WRI, NOSE, R_ANK,
                   R_ELB, R_HIP, R_KNE, R_SHO, R_WRI)
 
@@ -193,12 +192,6 @@ def render_svg(kpts, action: str | None = None) -> str:
             f'width="{WIDTH}" height="{HEIGHT}">\n  {body}\n</svg>\n')
 
 
-def avatar_svg(move: str) -> str | None:
-    """SVG avatar for a free-text move, or None if YOLO can't classify it."""
-    act = yolo.move_to_action(move)
-    return render_svg(POSES[act], act) if act else None
-
-
 # -- Generation + self-check --------------------------------------------------
 
 def check_poses() -> list[str]:
@@ -217,11 +210,9 @@ def check_poses() -> list[str]:
 def _preview_html() -> str:
     cards = []
     for act in POSES:
-        phrases = [m for m in MOVE_POOL if yolo.move_to_action(m) == act]
         cards.append(
             f'<figure><img src="{act}.svg" alt="{escape(act)}">'
             f'<figcaption><b>{escape(yolo.ACTION_LABELS[act])}</b>'
-            f'<span>{escape(" / ".join(phrases) or "(not in MOVE_POOL)")}</span>'
             f'<code>{act}</code></figcaption></figure>')
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">

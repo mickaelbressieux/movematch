@@ -4,9 +4,6 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# RTVLM = VLM caption endpoint; LLM = text NIM reasoner (see vss.py).
-export VSS_RTVLM_URL="${VSS_RTVLM_URL:-http://127.0.0.1:8100}"
-export VSS_LLM_URL="${VSS_LLM_URL:-http://127.0.0.1:38011}"
 export KEEP_UPLOADS="${KEEP_UPLOADS:-0}"
 
 HOST="${HOST:-127.0.0.1}"

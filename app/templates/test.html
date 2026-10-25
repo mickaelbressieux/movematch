@@ -1,58 +1,24 @@
 {% extends "base.html" %}
 
-{% block title %}Test a movement — MoveMatch{% endblock %}
+{% block title %}Script tester — MoveMatch{% endblock %}
 
 {% block content %}
 
 <div class="form-card">
-  <h2 style="margin-top:0">Write your own movements</h2>
+  <h2 style="margin-top:0">Score a clip against a script</h2>
   <p style="color:var(--muted);margin-bottom:1.25rem">
-    Type any movement in plain language &mdash; Add several to require them in
-    order, then drop a video to see who does them first.
+    Upload a clip recorded while following a choreography. The clip&rsquo;s first
+    frame is taken as the script&rsquo;s t&nbsp;=&nbsp;0. Results are shown but not
+    saved to the leaderboard.
   </p>
 
   <form method="POST" enctype="multipart/form-data" id="test-form">
-    <input type="hidden" name="moves_json" id="moves_json" value="[]">
-    <input type="hidden" name="method" id="method" value="{{ method }}">
-
-    <!-- Detector toggle -->
-    <div class="mode-toggle method-toggle">
-      <button type="button" class="mode-btn {{ 'active' if method == 'yolo' }}" id="btn-yolo" onclick="setMethod('yolo')">
-        🤸 YOLO pose
-      </button>
-      <button type="button" class="mode-btn {{ 'active' if method == 'vss' }}" id="btn-vss" onclick="setMethod('vss')"{% if not vss_available %} disabled title="VSS backend not reachable"{% endif %}>
-        🧠 VSS
-      </button>
-    </div>
-    <p style="color:var(--muted);font-size:.85rem;margin:.5rem 0 1rem">
-      YOLO pose detects a fixed gesture set (arms crossed, clap, hands on head,
-      raise one arm, crouch, touch a knee, wave, point). VSS handles any free-text move.
-    </p>
-
-    <!-- Movement builder -->
-    <div class="field-group">
-      <label class="field-label" for="move-input">Add a movement</label>
-      <div class="custom-actions">
-        <input type="text" id="move-input" class="text-input"
-               placeholder="e.g. spin around twice, touch your toes, do a star jump">
-        <button type="button" class="submit-btn compact" id="add-move">Add</button>
-      </div>
-    </div>
-
-    <div class="field-group">
-      <div class="seq-builder-header">
-        <span class="field-label" style="margin:0">Your movements (in order)</span>
-        <button type="button" class="clear-btn" id="clear-seq">Clear</button>
-      </div>
-      <div class="sequence-display compact" id="seq-preview">
-        <span class="seq-empty" id="seq-empty">No movements yet &mdash; type one above.</span>
-      </div>
-    </div>
+    {% include "_script_picker.html" %}
 
     <!-- Player names -->
     <div class="field-group">
       <label class="field-label" for="player_names">Player names (left &rarr; right, comma-separated)</label>
-      <input type="text" id="player_names" name="player_names"
+      <input type="text" id="player_names" name="player_names" value="{{ player_names }}"
              class="text-input" placeholder="e.g. Alice, Bob, Charlie">
     </div>
 
@@ -63,82 +29,26 @@
       <p class="upload-hint">MP4, MOV, AVI, MKV, WEBM &middot; max 50 MB</p>
     </div>
 
-    <button type="submit" class="submit-btn" id="submit-btn">Determine the winner</button>
+    <button type="submit" class="submit-btn" id="submit-btn">Score the clip</button>
   </form>
 </div>
 
 {% if result %}
-{% set back_href = '/test' %}
-{% set back_label = 'New Test' %}
+{% set back_href = '/test?script=' ~ result.script.id %}
+{% set back_label = 'New test' %}
 {% include "_result.html" %}
 {% endif %}
 
 <div class="loading-overlay" id="loading">
   <div class="spinner-ring"></div>
-  <p class="loading-text">Analyzing your video&hellip;</p>
-  <p class="loading-sub">Captioning with VSS &middot; reasoning over the timeline &middot; boxing the winner.</p>
+  <p class="loading-text">Scoring the clip&hellip;</p>
+  <p class="loading-sub">Tracking every player&rsquo;s pose &middot; timing each move against the beat.</p>
 </div>
 
 <script>
-let moves = {{ (result.moves if result else []) | tojson | safe }};
-
-const preview  = document.getElementById('seq-preview');
-const emptyMsg = document.getElementById('seq-empty');
-const hidden   = document.getElementById('moves_json');
-const moveInput = document.getElementById('move-input');
-
-function render() {
-  hidden.value = JSON.stringify(moves);
-  preview.querySelectorAll('.seq-step, .seq-arrow').forEach(n => n.remove());
-  emptyMsg.style.display = moves.length ? 'none' : '';
-  moves.forEach((m, i) => {
-    if (i > 0) {
-      const arrow = document.createElement('span');
-      arrow.className = 'seq-arrow';
-      arrow.innerHTML = '&rarr;';
-      preview.appendChild(arrow);
-    }
-    const step = document.createElement('span');
-    step.className = 'seq-step';
-    step.innerHTML = `<span class="seq-name">${m}</span>`;
-    step.title = 'Remove';
-    step.style.cursor = 'pointer';
-    step.addEventListener('click', () => { moves.splice(i, 1); render(); });
-    preview.appendChild(step);
-  });
-}
-
-function addMove() {
-  const v = moveInput.value.trim();
-  if (!v) return;
-  moves.push(v);
-  moveInput.value = '';
-  render();
-  moveInput.focus();
-}
-
-document.getElementById('add-move').addEventListener('click', addMove);
-moveInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); addMove(); }
-});
-document.getElementById('clear-seq').addEventListener('click', () => { moves = []; render(); });
-
-function setMethod(method) {
-  document.getElementById('method').value = method;
-  document.getElementById('btn-yolo').classList.toggle('active', method === 'yolo');
-  document.getElementById('btn-vss').classList.toggle('active', method === 'vss');
-}
-
-document.getElementById('test-form').addEventListener('submit', e => {
-  if (!moves.length) {
-    e.preventDefault();
-    alert('Add at least one movement.');
-    return;
-  }
+document.getElementById('test-form').addEventListener('submit', () => {
   document.getElementById('submit-btn').disabled = true;
   document.getElementById('loading').classList.add('active');
 });
-
-render();
 </script>
 {% endblock %}

@@ -424,9 +424,6 @@ body {
 .mode-btn:disabled { opacity: .4; cursor: not-allowed; }
 .mode-btn:disabled:hover { color: var(--muted); }
 
-/* Detector (VSS vs YOLO) toggle sits at the top of the form. */
-.method-toggle .mode-btn.active { color: var(--accent); }
-
 /* ── Camera ── */
 .camera-wrap {
   position: relative;
@@ -1109,23 +1106,13 @@ body {
   text-align: center;
 }
 
-/* ── Result meta + method tags ── */
+/* ── Result meta ── */
 .result-meta {
   margin-top: 12px;
   font-size: 13px;
   color: var(--muted);
   text-align: center;
 }
-
-.method-tag {
-  display: inline-block;
-  padding: 1px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-}
-.method-tag.vss  { color: var(--accent);  background: var(--accent-dim); }
-.method-tag.pose { color: var(--success); background: rgba(16,185,129,.18); }
 
 /* ── Winner gallery (leaderboard) ── */
 .winner-gallery {
@@ -1159,3 +1146,244 @@ body {
 .winner-card-name  { font-weight: 800; font-size: 15px; }
 .winner-card-moves { font-size: 13px; color: var(--text); }
 .winner-card-meta  { font-size: 12px; color: var(--muted); }
+
+/* ── Script picker ── */
+.script-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.script-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 12px 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: border-color .2s, color .2s, background .2s;
+}
+
+.script-btn:hover { color: var(--text); }
+
+.script-btn.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.script-name  { font-size: 15px; font-weight: 800; }
+.script-count { font-size: 12px; font-weight: 600; }
+
+/* ── Dance stage (fullscreen camera + avatar lane) ── */
+.stage {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: #000;
+  overflow: hidden;
+}
+
+.stage.active { display: block; }
+
+/* Mirrored for the dancers; the recording itself is not flipped. */
+.stage-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+  display: block;
+}
+
+.lane {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 24vh;
+  background: linear-gradient(to bottom, rgba(13,15,20,.85), rgba(13,15,20,.35));
+  border-bottom: 2px solid rgba(124,58,237,.5);
+  overflow: hidden;
+}
+
+.hit-line {
+  position: absolute;
+  top: 6%;
+  bottom: 6%;
+  width: 18vh;
+  transform: translateX(-50%);
+  border: 4px solid rgba(255,255,255,.85);
+  border-radius: 16px;
+  box-shadow: 0 0 18px rgba(124,58,237,.8), inset 0 0 18px rgba(124,58,237,.5);
+}
+
+.hit-line.pulse { animation: hit-pulse .35s ease-out; }
+
+@keyframes hit-pulse {
+  0%   { border-color: #fbbf24; box-shadow: 0 0 40px #fbbf24, inset 0 0 30px #fbbf24; transform: translateX(-50%) scale(1.12); }
+  100% { transform: translateX(-50%) scale(1); }
+}
+
+.lane-avatar {
+  position: absolute;
+  top: 8%;
+  left: 0;
+  width: 15vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.lane-avatar img {
+  height: 17vh;
+  width: auto;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,.6));
+}
+
+.lane-avatar span {
+  font-size: 1.6vh;
+  font-weight: 800;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  text-shadow: 0 1px 4px #000;
+}
+
+.stage-countdown {
+  position: absolute;
+  inset: 24vh 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30vh;
+  font-weight: 900;
+  color: #fff;
+  text-shadow: 0 0 40px rgba(124,58,237,.9);
+  pointer-events: none;
+}
+
+.stage .rec-badge {
+  top: auto;
+  bottom: 16px;
+  left: 16px;
+}
+
+/* ── Score table (results) ── */
+.winner-score {
+  display: block;
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.score-table-wrap {
+  overflow-x: auto;
+  margin-top: 16px;
+}
+
+.score-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.score-table th,
+.score-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(42,47,62,.6);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.score-table th {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.score-table th.is-winner { color: #fbbf24; }
+
+.score-move {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left !important;
+}
+
+.score-move img { height: 40px; width: auto; }
+.score-beat { color: var(--muted); }
+
+.score-cell { line-height: 1.2; }
+.score-rating { display: block; font-weight: 800; }
+.score-offset { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.rating-perfect .score-rating { color: #fbbf24; }
+.rating-great   .score-rating { color: var(--success); }
+.rating-good    .score-rating { color: #60a5fa; }
+.rating-ok      .score-rating { color: var(--text); }
+.rating-miss    .score-rating { color: var(--err-text); opacity: .7; }
+
+.score-table tfoot td { font-weight: 800; border-bottom: none; }
+.score-total { font-size: 16px; color: var(--accent); }
+.score-total.is-winner { color: #fbbf24; }
+
+.lb-date { color: var(--muted); font-size: 13px; }
+
+/* ── Next-move panel (under the hit line) ── */
+.next-panel {
+  position: absolute;
+  top: calc(24vh + 12px);
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.next-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 6px 10px;
+  background: rgba(13,15,20,.72);
+  border: 1px solid rgba(124,58,237,.5);
+  border-radius: 16px;
+}
+
+.next-slot[hidden] { display: none; }
+
+.next-main { width: 18vh; }
+.next-main img { height: 20vh; width: auto; }
+
+.next-then { width: 11vh; opacity: .8; }
+.next-then img { height: 11vh; width: auto; }
+
+.next-tag {
+  font-size: 1.4vh;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #a78bfa;
+}
+
+.next-name {
+  font-size: 1.8vh;
+  font-weight: 800;
+  color: #fff;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.next-then .next-name { font-size: 1.3vh; }

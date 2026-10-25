@@ -4,110 +4,24 @@
 
 <div class="form-card">
   <form method="POST" enctype="multipart/form-data" id="form">
-    <input type="hidden" name="challenge_json" id="challenge_json" value='{{ challenge_json }}'>
-    <input type="hidden" name="method" id="method" value="{{ method }}">
+    <input type="file" id="video" name="video" accept="video/*" hidden>
 
-    <!-- Compact toggles -->
-    <div class="toggle-row">
-      <!-- Detector toggle -->
-      <div class="mode-toggle method-toggle">
-        <button type="button" class="mode-btn {{ 'active' if method == 'yolo' }}" id="btn-yolo" onclick="setMethod('yolo')">
-          🤸 YOLO
-        </button>
-        <button type="button" class="mode-btn {{ 'active' if method == 'vss' }}" id="btn-vss" onclick="setMethod('vss')"{% if not vss_available %} disabled title="VSS backend not reachable"{% endif %}>
-          🧠 VSS
-        </button>
-      </div>
-
-      <!-- Mode toggle -->
-      <div class="mode-toggle">
-        <button type="button" class="mode-btn active" id="btn-record" onclick="setMode('record')">
-          📷 Camera
-        </button>
-        <button type="button" class="mode-btn" id="btn-upload" onclick="setMode('upload')">
-          🎬 File
-        </button>
-      </div>
-    </div>
-
-    <!-- Challenge (shown in file mode) -->
-    <div class="challenge-card compact" id="challenge-card" style="display:none">
-      <p class="challenge-label">Your challenge &mdash; who does it first?</p>
-      <div class="sequence-display compact" id="sequence-display">
-        {% for move in challenge %}
-          {% if not loop.first %}<span class="seq-arrow small">&rarr;</span>{% endif %}
-          <span class="seq-step">
-            <span class="seq-emoji">{{ move_emoji(move) }}</span>
-            <span class="seq-name">{{ move }}</span>
-          </span>
-        {% endfor %}
-      </div>
-      <button type="button" class="clear-btn" id="reroll">🎲 New challenge</button>
-    </div>
+    {% include "_script_picker.html" %}
 
     <!-- Player names -->
     <div class="field-group">
       <label class="field-label" for="player_names">Player names (left &rarr; right, comma-separated)</label>
-      <input type="text" id="player_names" name="player_names"
+      <input type="text" id="player_names" name="player_names" value="{{ player_names }}"
              class="text-input" placeholder="e.g. Alice, Bob, Charlie">
     </div>
 
-    <!-- Difficulty & time -->
-    <div class="field-row">
-      <div class="field-group">
-        <label class="field-label" for="difficulty">
-          Difficulty &middot; <span id="difficulty-value">{{ difficulty }}</span> moves
-        </label>
-        <input type="range" id="difficulty" name="difficulty" class="range-input"
-               min="{{ min_difficulty }}" max="{{ max_difficulty }}" step="1" value="{{ difficulty }}">
-      </div>
-      <div class="field-group">
-        <label class="field-label" for="record_time">
-          Time &middot; <span id="time-value">{{ record_seconds }}</span>s
-        </label>
-        <input type="range" id="record_time" name="time" class="range-input"
-               min="{{ min_seconds }}" max="{{ max_seconds }}" step="1" value="{{ record_seconds }}">
-      </div>
-    </div>
-
-    <!-- Upload mode -->
-    <div id="upload-section" style="display:none">
-      <div class="upload-zone" id="upload-zone">
-        <input type="file" id="video" name="video" accept="video/*">
-        <span class="upload-icon" id="upload-icon">🎬</span>
-        <p class="upload-primary" id="upload-primary">Drop your video here</p>
-        <p class="upload-hint">or click to browse &middot; MP4, MOV, AVI, MKV, WEBM &middot; max 50 MB</p>
-        <p class="upload-filename" id="upload-filename"></p>
-      </div>
-      <button type="submit" class="submit-btn" id="submit-btn">Find the winner</button>
-    </div>
-
-    <!-- Record mode -->
-    <div id="record-section">
-      <div class="camera-wrap">
-        <video id="preview" autoplay muted playsinline class="camera-preview"></video>
-
-        <div class="countdown-overlay" id="countdown-overlay">
-          <div class="overlay-actions">
-            <p class="overlay-do">DO THE MOVES!</p>
-            <div id="overlay-sequence"></div>
-          </div>
-          <div class="overlay-timer">
-            <span class="countdown-num" id="countdown-num">{{ record_seconds }}</span>
-          </div>
-        </div>
-
-        <div class="rec-badge" id="rec-badge">
-          <span class="rec-dot"></span> REC
-        </div>
-      </div>
-
-      <button type="button" class="record-btn" id="record-btn" onclick="startRecording()">
-        Start Recording
-      </button>
-      <p class="record-hint">Moves revealed when recording starts &middot; <span id="record-secs">{{ record_seconds }}</span> seconds &middot; auto-submits</p>
-    </div>
-
+    <button type="button" class="record-btn" id="start-btn" onclick="startDance()">
+      Start dancing
+    </button>
+    <p class="record-hint">
+      3-2-1, then do each move when its avatar reaches the line &middot;
+      <span id="script-duration"></span>s &middot; auto-submits
+    </p>
   </form>
 </div>
 
@@ -115,169 +29,190 @@
 {% include "_result.html" %}
 {% endif %}
 
+<!-- Fullscreen dance stage: mirrored camera + avatar lane across the top -->
+<div class="stage" id="stage">
+  <video id="preview" autoplay muted playsinline class="stage-video"></video>
+  <div class="lane" id="lane">
+    <div class="hit-line" id="hit-line"></div>
+  </div>
+  <!-- Static preview of the upcoming beat's move and the one after it -->
+  <div class="next-panel" id="next-panel">
+    <div class="next-slot next-main" id="next-main">
+      <span class="next-tag">Next</span>
+      <img alt="">
+      <span class="next-name"></span>
+    </div>
+    <div class="next-slot next-then" id="next-then">
+      <span class="next-tag">Then</span>
+      <img alt="">
+      <span class="next-name"></span>
+    </div>
+  </div>
+  <div class="stage-countdown" id="stage-countdown"></div>
+  <div class="rec-badge" id="rec-badge">
+    <span class="rec-dot"></span> REC
+  </div>
+</div>
+
 <div class="loading-overlay" id="loading">
   <div class="spinner-ring"></div>
-  <p class="loading-text">Analyzing your video&hellip;</p>
-  <p class="loading-sub">Captioning with VSS &middot; reasoning over the timeline &middot; boxing the winner.</p>
+  <p class="loading-text">Scoring your dance&hellip;</p>
+  <p class="loading-sub">Tracking every player&rsquo;s pose &middot; timing each move against the beat.</p>
 </div>
 
 <script>
-let CHALLENGE = {{ challenge_json|safe }};
+const PAYLOAD   = {{ payload | tojson }};
+const LEAD      = PAYLOAD.lead;  // s an avatar takes from the right edge to the line
+const HIT_X     = 0.10;          // hit line position, fraction of the lane width
+const HOLD      = 0.3;           // s an avatar lingers on the line, fading out
+const COUNTDOWN = 3;
 
-/* -- Difficulty & time controls -- */
-const diffSlider = document.getElementById('difficulty');
-const diffValue  = document.getElementById('difficulty-value');
-const timeSlider = document.getElementById('record_time');
-const timeValue  = document.getElementById('time-value');
+const scriptField = document.getElementById('script');
+const startBtn    = document.getElementById('start-btn');
+const stage       = document.getElementById('stage');
+const lane        = document.getElementById('lane');
+const hitLine     = document.getElementById('hit-line');
+const countdownEl = document.getElementById('stage-countdown');
+const recBadge    = document.getElementById('rec-badge');
+const preview     = document.getElementById('preview');
+const input       = document.getElementById('video');
+const nextPanel   = document.getElementById('next-panel');
+const nextMain    = document.getElementById('next-main');
+const nextThen    = document.getElementById('next-then');
 
-function currentSeconds() { return +timeSlider.value; }
+hitLine.style.left = (HIT_X * 100) + '%';
+// Keep the "Next" avatar centred under the hit line (both are 18vh wide).
+nextPanel.style.left = `max(12px, calc(${HIT_X * 100}% - 9vh))`;
 
-function reloadWith(difficulty, time) {
-  location.href = '{{ url_prefix }}/?difficulty=' + difficulty + '&time=' + time + '&_=' + Date.now();
+function currentScript() { return PAYLOAD.scripts[scriptField.value]; }
+
+function showDuration() {
+  document.getElementById('script-duration').textContent = Math.round(currentScript().end);
 }
-
-diffSlider.addEventListener('input', () => { diffValue.textContent = diffSlider.value; });
-// Regenerating the challenge is server-side, so reload once the value settles.
-diffSlider.addEventListener('change', () => reloadWith(diffSlider.value, timeSlider.value));
-
-timeSlider.addEventListener('input', () => {
-  timeValue.textContent = timeSlider.value;
-  document.getElementById('record-secs').textContent    = timeSlider.value;
-  document.getElementById('countdown-num').textContent  = timeSlider.value;
-});
-
-/* -- Reroll challenge (updates the sequence in place) -- */
-const seqDisplay = document.getElementById('sequence-display');
-const rerollBtn  = document.getElementById('reroll');
-
-function renderSequence(moves) {
-  seqDisplay.innerHTML = moves.map((m, i) =>
-    (i ? '<span class="seq-arrow small">&rarr;</span>' : '') +
-    `<span class="seq-step"><span class="seq-emoji">${m.emoji}</span>` +
-    `<span class="seq-name">${m.name}</span></span>`
-  ).join('');
-}
-
-rerollBtn.addEventListener('click', async () => {
-  rerollBtn.disabled = true;
-  try {
-    const res  = await fetch('{{ url_prefix }}/api/challenge', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'difficulty=' + diffSlider.value,
-    });
-    const data = await res.json();
-    CHALLENGE  = data.moves.map(m => m.name);
-    document.getElementById('challenge_json').value = JSON.stringify(CHALLENGE);
-    renderSequence(data.moves);
-  } finally {
-    rerollBtn.disabled = false;
-  }
-});
-
-/* -- Upload mode -- */
-const zone    = document.getElementById('upload-zone');
-const input   = document.getElementById('video');
-const icon    = document.getElementById('upload-icon');
-const primary = document.getElementById('upload-primary');
-const fnLabel = document.getElementById('upload-filename');
-
-input.addEventListener('change', () => {
-  if (input.files.length) {
-    zone.classList.add('has-file');
-    icon.textContent    = '✅';
-    primary.textContent = 'File ready';
-    fnLabel.textContent = input.files[0].name;
-  }
-});
-
-['dragover', 'dragenter'].forEach(evt =>
-  zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.add('drag-over'); })
-);
-['dragleave', 'drop'].forEach(evt =>
-  zone.addEventListener(evt, () => zone.classList.remove('drag-over'))
-);
-
-document.getElementById('form').addEventListener('submit', () => {
-  document.getElementById('submit-btn').disabled = true;
-  document.getElementById('loading').classList.add('active');
-});
-
-/* -- Detector switcher (VSS vs local YOLO pose) -- */
-function setMethod(method) {
-  document.getElementById('method').value = method;
-  document.getElementById('btn-yolo').classList.toggle('active', method === 'yolo');
-  document.getElementById('btn-vss').classList.toggle('active', method === 'vss');
-}
-
-/* -- Mode switcher -- */
-function setMode(mode) {
-  document.getElementById('upload-section').style.display  = mode === 'upload' ? '' : 'none';
-  document.getElementById('record-section').style.display  = mode === 'record' ? '' : 'none';
-  document.getElementById('btn-upload').classList.toggle('active', mode === 'upload');
-  document.getElementById('btn-record').classList.toggle('active', mode === 'record');
-  document.getElementById('challenge-card').style.display = mode === 'upload' ? '' : 'none';
-  input.required = mode === 'upload';
-  if (mode !== 'record') stopCamera();
-}
+scriptField.addEventListener('change', showDuration);
+showDuration();
 
 /* -- Camera / recording -- */
 let mediaRecorder  = null;
 let recordedChunks = [];
 let cameraStream   = null;
 
-async function startRecording() {
-  const btn      = document.getElementById('record-btn');
-  const overlay  = document.getElementById('countdown-overlay');
-  const numEl    = document.getElementById('countdown-num');
-  const recBadge = document.getElementById('rec-badge');
-  const preview  = document.getElementById('preview');
-  const seqEl    = document.getElementById('overlay-sequence');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  btn.disabled = true;
-  btn.textContent = 'Starting camera...';
+async function startDance() {
+  const script = currentScript();
+  startBtn.disabled = true;
+  startBtn.textContent = 'Starting camera...';
 
   try {
     cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
   } catch (err) {
-    btn.disabled = false;
-    btn.textContent = 'Start Recording';
+    resetStartBtn();
     alert('Camera access denied: ' + err.message);
     return;
   }
 
-  seqEl.innerHTML = CHALLENGE.map((m, i) =>
-    `<p class="overlay-action"><span class="overlay-num">${i+1}</span> ${m}</p>`
-  ).join('');
-
   preview.srcObject = cameraStream;
+  stage.classList.add('active');
+  // Fullscreen is best effort: the stage already covers the viewport without it.
+  try { await stage.requestFullscreen?.(); } catch (_) {}
+
+  shownNext = null;
+  showNext(script.steps, 0);  // first move is visible during the countdown
+  for (let n = COUNTDOWN; n > 0; n--) {
+    countdownEl.textContent = n;
+    await sleep(1000);
+  }
+  countdownEl.textContent = '';
+
+  const avatars = buildAvatars(script);
   recordedChunks = [];
-
-  const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
+  const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4']
     .find(t => MediaRecorder.isTypeSupported(t)) || '';
-
   mediaRecorder = new MediaRecorder(cameraStream, mime ? { mimeType: mime } : {});
   mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
   mediaRecorder.onstop = submitRecording;
-
+  // The script clock starts with the recording, so script t=0 is video t=0.
+  mediaRecorder.onstart = () => {
+    const t0 = performance.now();
+    recBadge.classList.add('visible');
+    requestAnimationFrame(function tick(now) {
+      const t = (now - t0) / 1000;
+      drawAvatars(avatars, t);
+      showNext(script.steps, t);
+      if (t >= script.end) {
+        mediaRecorder.stop();
+        closeStage();
+      } else {
+        requestAnimationFrame(tick);
+      }
+    });
+  };
   mediaRecorder.start();
-  overlay.classList.add('visible');
-  recBadge.classList.add('visible');
-  btn.textContent = 'Recording...';
+}
 
-  let remaining = currentSeconds();
-  numEl.textContent = remaining;
+/* -- Avatar lane -- */
+function buildAvatars(script) {
+  lane.querySelectorAll('.lane-avatar').forEach(el => el.remove());
+  return script.steps.map(step => {
+    const el = document.createElement('div');
+    el.className = 'lane-avatar';
+    el.innerHTML = `<img src="static/avatars/${step.move}.svg" alt=""><span>${step.label}</span>`;
+    lane.appendChild(el);
+    return { step, el, hit: false };
+  });
+}
 
-  const timer = setInterval(() => {
-    remaining--;
-    numEl.textContent = remaining;
-    if (remaining <= 0) {
-      clearInterval(timer);
-      mediaRecorder.stop();
-      overlay.classList.remove('visible');
-      recBadge.classList.remove('visible');
+function drawAvatars(avatars, t) {
+  const width = lane.clientWidth;
+  const hitX  = width * HIT_X;
+  for (const a of avatars) {
+    const dt = a.step.at - t;  // seconds until this avatar's beat
+    if (dt > LEAD || dt < -HOLD) {
+      a.el.style.opacity = 0;
+      continue;
     }
-  }, 1000);
+    // Constant speed from the right edge (dt = LEAD) to the hit line (dt = 0).
+    const x = dt > 0 ? hitX + (dt / LEAD) * (width - hitX) : hitX;
+    a.el.style.transform = `translateX(${x - a.el.offsetWidth / 2}px)`;
+    a.el.style.opacity   = dt > 0 ? 1 : 1 + dt / HOLD;
+    if (dt <= 0 && !a.hit) {
+      a.hit = true;
+      a.el.classList.add('on-beat');
+      hitLine.classList.remove('pulse');
+      void hitLine.offsetWidth;  // restart the pulse animation
+      hitLine.classList.add('pulse');
+    }
+  }
+}
+
+/* -- Next-move panel: the upcoming beat's move and the one after, static -- */
+let shownNext = null;  // index of the step shown as "Next" (-1 once all beats passed)
+
+function showNext(steps, t) {
+  const i = steps.findIndex(s => s.at > t);
+  if (i === shownNext) return;
+  shownNext = i;
+  fillNextSlot(nextMain, i < 0 ? null : steps[i]);
+  fillNextSlot(nextThen, i < 0 ? null : steps[i + 1]);
+}
+
+function fillNextSlot(slot, step) {
+  slot.hidden = !step;
+  if (!step) return;
+  slot.querySelector('img').src = `static/avatars/${step.move}.svg`;
+  slot.querySelector('.next-name').textContent = step.label;
+}
+
+function closeStage() {
+  recBadge.classList.remove('visible');
+  stage.classList.remove('active');
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+}
+
+function resetStartBtn() {
+  startBtn.disabled = false;
+  startBtn.textContent = 'Start dancing';
 }
 
 function submitRecording() {
@@ -287,13 +222,11 @@ function submitRecording() {
   const blob     = new Blob(recordedChunks, { type: mimeType });
   if (blob.size === 0) {
     alert('Recording came back empty — no video was captured. Please try again.');
-    const btn = document.getElementById('record-btn');
-    btn.disabled = false;
-    btn.textContent = 'Start Recording';
+    resetStartBtn();
     return;
   }
-  const file     = new File([blob], `recording.${ext}`, { type: blob.type });
-  const dt       = new DataTransfer();
+  const file = new File([blob], `recording.${ext}`, { type: blob.type });
+  const dt   = new DataTransfer();
   dt.items.add(file);
   input.files = dt.files;
 
@@ -306,10 +239,7 @@ function stopCamera() {
     cameraStream.getTracks().forEach(t => t.stop());
     cameraStream = null;
   }
-  document.getElementById('preview').srcObject = null;
+  preview.srcObject = null;
 }
-
-/* -- Camera is the default mode; hide the challenge card on load -- */
-setMode('record');
 </script>
 {% endblock %}

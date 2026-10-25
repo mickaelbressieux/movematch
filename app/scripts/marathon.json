@@ -1,0 +1,14 @@
+{
+  "id": "marathon",
+  "name": "Marathon",
+  "steps": [
+    {"move": "clap", "at": 2.0},
+    {"move": "raise_one_arm", "at": 4.0},
+    {"move": "crouch", "at": 6.0},
+    {"move": "hands_on_head", "at": 8.0},
+    {"move": "point_camera", "at": 10.0},
+    {"move": "arms_crossed", "at": 12.0},
+    {"move": "touch_knee", "at": 14.0},
+    {"move": "clap", "at": 16.0}
+  ]
+}

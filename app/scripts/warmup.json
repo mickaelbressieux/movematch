@@ -1,0 +1,9 @@
+{
+  "id": "warmup",
+  "name": "Warm-up",
+  "steps": [
+    {"move": "clap", "at": 2.0},
+    {"move": "raise_one_arm", "at": 4.0},
+    {"move": "hands_on_head", "at": 6.0}
+  ]
+}

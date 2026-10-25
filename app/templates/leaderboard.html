@@ -2,29 +2,33 @@
 {% block title %}Leaderboard — MoveMatch{% endblock %}
 
 {% block content %}
+{% for sid, rows in high_scores.items() %}
+{% set s = scripts[sid] %}
 <div class="lb-section">
-  <p class="result-label">Rankings</p>
-  {% if rankings %}
+  <p class="result-label">{{ s.name }} &middot; {{ s.steps | length }} moves &middot; best scores</p>
+  {% if rows %}
   <table class="lb-table">
     <thead>
-      <tr><th>#</th><th>Player</th><th>Wins</th></tr>
+      <tr><th>#</th><th>Player</th><th>Score</th><th>Date</th></tr>
     </thead>
     <tbody>
-      {% for row in rankings %}
+      {% for row in rows %}
       <tr>
         <td class="lb-rank">
           {% if loop.index == 1 %}🥇{% elif loop.index == 2 %}🥈{% elif loop.index == 3 %}🥉{% else %}{{ loop.index }}{% endif %}
         </td>
         <td>{{ row.name }}</td>
-        <td class="lb-wins">{{ row.wins }}</td>
+        <td class="lb-wins">{{ row.score }}</td>
+        <td class="lb-date">{{ row.played_at[:10] }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
   {% else %}
-  <p class="lb-empty">No games played yet. Go play!</p>
+  <p class="lb-empty">No scores yet. Go dance!</p>
   {% endif %}
 </div>
+{% endfor %}
 
 <div class="lb-section">
   <p class="result-label">Winners</p>
@@ -35,12 +39,12 @@
       <img src="static/snapshots/{{ w.winner_image }}" alt="Winner snapshot" loading="lazy">
       <figcaption>
         <span class="winner-card-name">🏆 {{ w.winner_name }}</span>
+        {% if w.script %}
         <span class="winner-card-moves">
-          {% for move in w.moves %}{{ move_emoji(move) }} {{ move }}{% if not loop.last %} &rarr; {% endif %}{% endfor %}
+          {{ w.script.name }}{% if w.score is not none %} &middot; {{ w.score }} pts{% endif %}
         </span>
-        <span class="winner-card-meta">
-          {{ w.played_at[:16] | replace('T', ' ') }} &middot; <span class="method-tag vss">VSS</span>
-        </span>
+        {% endif %}
+        <span class="winner-card-meta">{{ w.played_at[:16] | replace('T', ' ') }}</span>
       </figcaption>
     </figure>
     {% endfor %}
@@ -50,5 +54,5 @@
   {% endif %}
 </div>
 
-<a href="{{ url_prefix }}/" class="play-again-btn" style="display:inline-block;margin-top:24px">Play a round</a>
+<a href="{{ url_prefix }}/" class="play-again-btn" style="display:inline-block;margin-top:24px">Dance a round</a>
 {% endblock %}

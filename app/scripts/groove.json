@@ -1,0 +1,11 @@
+{
+  "id": "groove",
+  "name": "Groove",
+  "steps": [
+    {"move": "arms_crossed", "at": 2.0},
+    {"move": "clap", "at": 4.0},
+    {"move": "point_camera", "at": 6.0},
+    {"move": "hands_on_head", "at": 8.0},
+    {"move": "raise_one_arm", "at": 10.0}
+  ]
+}
