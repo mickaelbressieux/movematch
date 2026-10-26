@@ -1,13 +1,16 @@
-"""MoveMatch pose avatars -- a small figure showing each YOLO move.
+"""MoveMatch pose avatars -- a small figure showing each move.
 
-Each move the YOLO path can classify (see yolo.py) gets one canonical pose: 17 COCO
-keypoints in a fixed 240x300 avatar frame, drawn as a rounded mannequin in SVG. The
-figure faces the camera, so it reads like a mirror for the player (the person's
-left side is on the image right, same convention as YOLO's image coordinates).
+The avatar is the coach: a figure facing the player, drawn as the dancer would
+appear on video, which the player copies like a mirror (Just Dance style). A pose
+template stores the PLAYER's view, so the avatar draws its mirror image: a move
+where the player raises their LEFT arm shows the coach's arm on the screen's LEFT,
+the same side the player sees their own left arm in the mirrored camera preview.
 
-Every pose is checked against ``yolo._classify``, so an avatar always shows a pose
-the detector actually accepts. Run ``python avatars.py`` to (re)generate
-``static/avatars/<action>.svg`` plus a ``preview.html`` gallery.
+``render_svg`` draws a rounded mannequin from any 17 keypoints in the 240x300
+avatar frame; ``render_template`` maps a normalized template into that frame first.
+``POSES`` are the hand-placed legacy gestures, the source of their templates (see
+tools/convert_gestures.py). Run ``python avatars.py`` to check the pose library and
+(re)generate ``static/avatars/<move>.svg`` plus a ``preview.html`` gallery.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-import yolo
+import poses
 from yolo import (L_ANK, L_ELB, L_HIP, L_KNE, L_SHO, L_WRI, NOSE, R_ANK,
                   R_ELB, R_HIP, R_KNE, R_SHO, R_WRI)
 
@@ -26,6 +29,9 @@ OUT_DIR = Path(__file__).resolve().parent / "static" / "avatars"
 
 WIDTH, HEIGHT = 240, 300
 HEAD_R = 22
+TORSO_PX = 85         # torso length of a template drawn at full size
+GROUND_Y = 285        # where the lowest ankle stands
+MARGIN = 8            # px kept free around the figure when it must shrink to fit
 
 # Palette: one accent body color, a darker shade for outlines / details.
 BODY = "#4f7cff"
@@ -88,10 +94,6 @@ POSES: dict[str, np.ndarray] = {
     # Right arm extended straight out to the side at shoulder height.
     "point_camera": _pose(re=(62, 100), rw=(26, 100)),
 }
-
-# Aliases the geometry can't tell apart (a raised arm also counts as a wave).
-_ALLOWED_EXTRA = {"raise_one_arm": {"wave"}, "wave": {"raise_one_arm"}}
-
 
 # -- Rendering ----------------------------------------------------------------
 
@@ -192,28 +194,56 @@ def render_svg(kpts, action: str | None = None) -> str:
             f'width="{WIDTH}" height="{HEIGHT}">\n  {body}\n</svg>\n')
 
 
-# -- Generation + self-check --------------------------------------------------
+# -- Templates ----------------------------------------------------------------
 
-def check_poses() -> list[str]:
-    """Run every pose through the YOLO classifier; return a list of failures."""
-    errors = []
-    for act, kpts in POSES.items():
-        got = yolo._classify(kpts)
-        extra = got - {act} - _ALLOWED_EXTRA.get(act, set())
-        status = "ok" if act in got and not extra else "FAIL"
-        print(f"{status:4}  {act:14} -> {sorted(got)}")
-        if status == "FAIL":
-            errors.append(act)
-    return errors
+def to_frame(n: np.ndarray) -> np.ndarray:
+    """Normalized keypoints (hip-centred, torso units) -> avatar frame pixels:
+    torso TORSO_PX long, hips centred, feet on the ground; shrunk if a raised arm
+    or a wide stance would leave the frame."""
+    n = np.asarray(n, float)
+    ank = [n[i, 1] for i in (L_ANK, R_ANK) if n[i, 2] > 0]
+    bottom = max(ank) if ank else 1.2  # hidden feet: assume standing
+    # Each joint must stay inside the frame with its drawing around it (the head
+    # circle, a hand, a foot): scale <= room / distance for every joint.
+    scale = TORSO_PX
+    for i in np.flatnonzero(n[:, 2] > 0):
+        pad = HEAD_R + 2 if i == NOSE else 18 if i in (L_ANK, R_ANK) else MARGIN + 2
+        if bottom - n[i, 1] > 1e-6:
+            scale = min(scale, (GROUND_Y - pad) / (bottom - n[i, 1]))
+        if abs(n[i, 0]) > 1e-6:
+            scale = min(scale, (WIDTH / 2 - pad) / abs(n[i, 0]))
+    hip_y = GROUND_Y - bottom * scale
+    out = n.copy()
+    out[:, 0] = WIDTH / 2 + n[:, 0] * scale
+    out[:, 1] = hip_y + n[:, 1] * scale
+    return out
 
 
-def _preview_html() -> str:
+def render_template(t: poses.Template) -> str:
+    """The coach avatar for a template: its mirror image, mapped into the frame."""
+    return render_svg(to_frame(poses.mirror(t.kpts)), t.id)
+
+
+def check_mirror() -> list[str]:
+    """A template where the player raises their LEFT arm must draw the raised hand
+    on the screen's left half (see the module docstring)."""
+    k = poses.relaxed_stance()
+    k[L_ELB, :2], k[L_WRI, :2] = (0.35, -1.5), (0.4, -2.0)   # player's left arm up
+    px = to_frame(poses.mirror(k))
+    raised = min((L_WRI, R_WRI), key=lambda i: px[i, 1])
+    ok = px[raised, 0] < WIDTH / 2
+    print(f"{'ok' if ok else 'FAIL':4}  mirror: player's left arm up -> hand at "
+          f"x={px[raised, 0]:.0f} of {WIDTH} (screen-{'left' if ok else 'right'})")
+    return [] if ok else ["avatar shows the player's left arm on the screen's right"]
+
+
+def _preview_html(lib: dict[str, poses.Template]) -> str:
     cards = []
-    for act in POSES:
+    for t in lib.values():
         cards.append(
-            f'<figure><img src="{act}.svg" alt="{escape(act)}">'
-            f'<figcaption><b>{escape(yolo.ACTION_LABELS[act])}</b>'
-            f'<code>{act}</code></figcaption></figure>')
+            f'<figure><img src="{escape(t.id)}.svg" alt="{escape(t.id)}">'
+            f'<figcaption><b>{escape(t.label)}</b>'
+            f'<code>{escape(t.id)} &middot; thr {t.threshold:.2f}</code></figcaption></figure>')
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -231,7 +261,7 @@ def _preview_html() -> str:
   figcaption span {{ color: #5b6478; }}
   code {{ color: #8a93a6; font-size: .8rem; }}
 </style></head><body>
-<h1>MoveMatch pose avatars (YOLO moves)</h1>
+<h1>MoveMatch pose avatars (pose library)</h1>
 <div class="grid">
 {chr(10).join(cards)}
 </div></body></html>
@@ -239,14 +269,15 @@ def _preview_html() -> str:
 
 
 def main() -> int:
-    errors = check_poses()
+    errors = poses.check_library() + check_mirror()
+    lib = poses.load_library()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    for act, kpts in POSES.items():
-        (OUT_DIR / f"{act}.svg").write_text(render_svg(kpts, act))
-    (OUT_DIR / "preview.html").write_text(_preview_html())
-    print(f"Wrote {len(POSES)} avatars + preview.html to {OUT_DIR}")
+    for t in lib.values():
+        (OUT_DIR / f"{t.id}.svg").write_text(render_template(t))
+    (OUT_DIR / "preview.html").write_text(_preview_html(lib))
+    print(f"Wrote {len(lib)} avatars + preview.html to {OUT_DIR}")
     if errors:
-        print(f"Poses not recognized by yolo._classify: {', '.join(errors)}")
+        print("\n".join(errors))
         return 1
     return 0
 

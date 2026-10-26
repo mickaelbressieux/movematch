@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}Results — MoveMatch{% endblock %}
+
+{% block content %}
+{% if result %}
+{% include "_result.html" %}
+{% elif job.status == 'error' %}
+<div class="form-card">
+  <h2 style="margin-top:0">Scoring failed</h2>
+  <p class="create-hint">{{ job.error }}</p>
+  <a href="{{ url_prefix }}{{ back_href }}" class="play-again-btn">{{ back_label }}</a>
+</div>
+{% else %}
+<div class="form-card">
+  <h2 style="margin-top:0">Scoring your dance&hellip;</h2>
+  <div class="progress"><div class="progress-bar" id="progress-bar"
+       style="width: {{ (job.progress * 100) | round(1) }}%"></div></div>
+  <p class="create-hint" id="progress-msg">{{ job.message }}</p>
+  <p class="create-hint">Tracking every player&rsquo;s pose &middot; timing each move against the beat.
+    A full song takes a few minutes; you can leave this page open.</p>
+</div>
+<script>
+const PREFIX = {{ url_prefix | tojson }};
+const JOB = {{ job.id | tojson }};
+async function poll() {
+  const res = await fetch(`${PREFIX}/api/job/${JOB}`);
+  if (!res.ok) return setTimeout(poll, 2000);
+  const job = await res.json();
+  document.getElementById('progress-bar').style.width = (job.progress * 100) + '%';
+  document.getElementById('progress-msg').textContent = job.message;
+  if (job.status === 'running') setTimeout(poll, 1000);
+  else location.reload();
+}
+poll();
+</script>
+{% endif %}
+{% endblock %}

@@ -7,9 +7,11 @@
 <div class="form-card">
   <h2 style="margin-top:0">Score a clip against a script</h2>
   <p style="color:var(--muted);margin-bottom:1.25rem">
-    Upload a clip recorded while following a choreography. The clip&rsquo;s first
-    frame is taken as the script&rsquo;s t&nbsp;=&nbsp;0. Results are shown but not
-    saved to the leaderboard.
+    Upload a clip recorded while following a choreography. Song time 0 is placed
+    at the audio offset into the clip (0 for scripts without music: the clip&rsquo;s
+    first frame). Clips kept with <code>KEEP_UPLOADS=1</code> have a
+    <code>.json</code> next to them with the speed and offset they were played with.
+    Results are shown but not saved to the leaderboard.
   </p>
 
   <form method="POST" enctype="multipart/form-data" id="test-form">
@@ -20,6 +22,12 @@
       <label class="field-label" for="player_names">Player names (left &rarr; right, comma-separated)</label>
       <input type="text" id="player_names" name="player_names" value="{{ player_names }}"
              class="text-input" placeholder="e.g. Alice, Bob, Charlie">
+    </div>
+
+    <div class="field-group">
+      <label class="field-label" for="audio_offset">Audio offset (s into the clip where song time 0 is)</label>
+      <input type="number" id="audio_offset" name="audio_offset" value="0" step="0.001"
+             class="text-input">
     </div>
 
     <!-- Video upload -->
@@ -33,11 +41,7 @@
   </form>
 </div>
 
-{% if result %}
-{% set back_href = '/test?script=' ~ result.script.id %}
-{% set back_label = 'New test' %}
-{% include "_result.html" %}
-{% endif %}
+
 
 <div class="loading-overlay" id="loading">
   <div class="spinner-ring"></div>

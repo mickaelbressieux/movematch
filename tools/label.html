@@ -1,0 +1,198 @@
+<!doctype html>
+<!--
+  MoveMatch key-pose labeller: ground truth for tools/timing_proto.py.
+
+  Open this file directly in a browser (no server needed), load a dance video and
+  mark the moment the dancer ARRIVES in each key pose -- the same instant the game
+  scores (the start of a held pose). Export saves {video, fps, labels: [t, ...]};
+  put it in tools/labels/<video-stem>.json.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Key-pose labeller</title>
+<style>
+  :root { --bg: #f4f6fb; --card: #fff; --fg: #1d2433; --muted: #5b6478;
+          --accent: #4f7cff; --sel: #ff9f1c; --line: #d9deea; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #12151c; --card: #1b2030; --fg: #e6e9f2; --muted: #9aa3b8;
+            --line: #2c3346; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; font: 14px/1.4 system-ui, sans-serif;
+         background: var(--bg); color: var(--fg); }
+  main { max-width: 1100px; margin: 0 auto; display: grid; gap: 12px;
+         grid-template-columns: minmax(0, 1fr) 280px; }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border-radius: 10px; padding: 12px; }
+  video { width: 100%; max-height: 70vh; background: #000; border-radius: 6px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+  button, select, input { font: inherit; }
+  #bar { position: relative; height: 34px; margin-top: 10px; background: var(--bg);
+         border-radius: 6px; cursor: pointer; }
+  #bar .head { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--fg); }
+  #bar .mark { position: absolute; top: 4px; bottom: 4px; width: 3px; background: var(--accent);
+               border-radius: 2px; }
+  #bar .mark.sel { background: var(--sel); width: 5px; }
+  #time { font-variant-numeric: tabular-nums; min-width: 12ch; }
+  ol { margin: 0; padding-left: 2.5em; max-height: 60vh; overflow: auto;
+       font-variant-numeric: tabular-nums; }
+  li { padding: 2px 4px; cursor: pointer; border-radius: 4px; }
+  li.sel { background: var(--sel); color: #000; }
+  kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 12px; }
+  .help { color: var(--muted); font-size: 13px; }
+  .help p { margin: 4px 0; }
+</style>
+</head>
+<body>
+<main>
+  <section class="card">
+    <div class="row">
+      <input type="file" id="file" accept="video/*">
+      <label>fps <input type="number" id="fps" value="30" min="1" max="120" style="width:5em"></label>
+      <label>speed
+        <select id="speed">
+          <option>0.25</option><option>0.5</option><option>0.75</option>
+          <option selected>1</option>
+        </select>
+      </label>
+    </div>
+    <video id="video" controls playsinline></video>
+    <div id="bar"><div class="head" id="head"></div></div>
+    <div class="row">
+      <span id="time">0.000 s</span>
+      <button id="play">Play / pause (K)</button>
+      <button id="mark">Mark (Space)</button>
+    </div>
+  </section>
+  <aside class="card">
+    <div class="row" style="margin-top:0">
+      <button id="export">Export JSON</button>
+      <label>Import <input type="file" id="import" accept=".json" style="width:11em"></label>
+    </div>
+    <p><b id="count">0</b> marks</p>
+    <ol id="list"></ol>
+    <div class="help">
+      <p><kbd>Space</kbd> mark the current time &middot; <kbd>K</kbd> play/pause</p>
+      <p><kbd>,</kbd> <kbd>.</kbd> step one frame back / forward</p>
+      <p><kbd>&larr;</kbd> <kbd>&rarr;</kbd> nudge the selected mark by one frame</p>
+      <p><kbd>Del</kbd> delete the selected mark &middot; click a mark to seek</p>
+      <p>Mark when the dancer <b>arrives</b> in the pose, not the middle of the hold.</p>
+    </div>
+  </aside>
+</main>
+<script>
+const video = document.getElementById('video');
+const bar = document.getElementById('bar');
+const head = document.getElementById('head');
+const list = document.getElementById('list');
+const fpsIn = document.getElementById('fps');
+let marks = [];      // sorted times in s
+let selected = -1;   // index into marks
+let videoName = '';
+
+const frame = () => 1 / (parseFloat(fpsIn.value) || 30);
+const fmt = t => t.toFixed(3);
+
+document.getElementById('file').onchange = e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  videoName = f.name;
+  video.src = URL.createObjectURL(f);
+};
+document.getElementById('speed').onchange = e => { video.playbackRate = +e.target.value; };
+video.addEventListener('loadedmetadata', () => {
+  video.playbackRate = +document.getElementById('speed').value;
+  render();
+});
+video.addEventListener('timeupdate', drawHead);
+document.getElementById('play').onclick = togglePlay;
+document.getElementById('mark').onclick = addMark;
+
+function togglePlay() { video.paused ? video.play() : video.pause(); }
+
+function addMark() {
+  if (!video.duration) return;
+  const t = +video.currentTime.toFixed(3);
+  marks.push(t);
+  marks.sort((a, b) => a - b);
+  selected = marks.indexOf(t);
+  render();
+}
+
+function render() {
+  bar.querySelectorAll('.mark').forEach(m => m.remove());
+  list.innerHTML = '';
+  const dur = video.duration || 1;
+  marks.forEach((t, i) => {
+    const m = document.createElement('div');
+    m.className = 'mark' + (i === selected ? ' sel' : '');
+    m.style.left = (t / dur * 100) + '%';
+    bar.appendChild(m);
+    const li = document.createElement('li');
+    li.textContent = fmt(t) + ' s';
+    li.className = i === selected ? 'sel' : '';
+    li.onclick = () => { selected = i; video.currentTime = t; render(); };
+    list.appendChild(li);
+  });
+  document.getElementById('count').textContent = marks.length;
+  drawHead();
+}
+
+function drawHead() {
+  const dur = video.duration || 1;
+  head.style.left = (video.currentTime / dur * 100) + '%';
+  document.getElementById('time').textContent = fmt(video.currentTime) + ' s';
+}
+
+bar.onclick = e => {
+  if (!video.duration) return;
+  const r = bar.getBoundingClientRect();
+  video.currentTime = (e.clientX - r.left) / r.width * video.duration;
+};
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  const k = e.key;
+  if (k === ' ') { e.preventDefault(); addMark(); }
+  else if (k === 'k' || k === 'K') togglePlay();
+  else if (k === ',' || k === '.') {
+    video.pause();
+    video.currentTime = Math.max(0, video.currentTime + (k === '.' ? 1 : -1) * frame());
+  } else if ((k === 'ArrowLeft' || k === 'ArrowRight') && selected >= 0) {
+    e.preventDefault();
+    const t = Math.max(0, marks[selected] + (k === 'ArrowRight' ? 1 : -1) * frame());
+    marks[selected] = +t.toFixed(3);
+    const keep = marks[selected];
+    marks.sort((a, b) => a - b);
+    selected = marks.indexOf(keep);
+    video.currentTime = keep;
+    render();
+  } else if ((k === 'Delete' || k === 'Backspace') && selected >= 0) {
+    marks.splice(selected, 1);
+    selected = Math.min(selected, marks.length - 1);
+    render();
+  }
+});
+
+document.getElementById('export').onclick = () => {
+  const data = { video: videoName, fps: parseFloat(fpsIn.value) || 30, labels: marks };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+  a.download = (videoName.replace(/\.[^.]+$/, '') || 'labels') + '.json';
+  a.click();
+};
+
+document.getElementById('import').onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const data = JSON.parse(await f.text());
+  marks = (data.labels || []).map(Number).sort((a, b) => a - b);
+  if (data.fps) fpsIn.value = data.fps;
+  selected = -1;
+  render();
+};
+</script>
+</body>
+</html>

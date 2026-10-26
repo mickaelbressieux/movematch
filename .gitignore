@@ -3,3 +3,7 @@ __pycache__
 uploads
 movematch.db
 .venv
+tools/cache/
+tools/out/
+app/songs_src/
+app/jobs/

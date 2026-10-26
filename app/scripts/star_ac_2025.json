@@ -1,0 +1,168 @@
+{
+ "id": "star_ac_2025",
+ "name": "Star Ac 2025",
+ "audio": "songs/star_ac_2025.m4a",
+ "duration": 20.5,
+ "source": "b99f313d0fb44a8297e489a0106fda61",
+ "steps": [
+  {
+   "move": "clap",
+   "at": 1.95,
+   "lead": -0.017
+  },
+  {
+   "move": "star_ac_2025_1",
+   "at": 2.183,
+   "lead": -0.05
+  },
+  {
+   "move": "clap",
+   "at": 2.515,
+   "lead": 0.082
+  },
+  {
+   "move": "star_ac_2025_2",
+   "at": 2.879,
+   "lead": 0.179
+  },
+  {
+   "move": "dans_un_autre_monde_12",
+   "at": 3.1,
+   "lead": 0.067
+  },
+  {
+   "move": "star_ac_2025_3",
+   "at": 3.553,
+   "lead": -0.014
+  },
+  {
+   "move": "dans_un_autre_monde_1",
+   "at": 4.017,
+   "lead": -0.083
+  },
+  {
+   "move": "dans_un_autre_monde_9",
+   "at": 4.482,
+   "lead": 0.049
+  },
+  {
+   "move": "dans_un_autre_monde_8",
+   "at": 4.934,
+   "lead": 0.101
+  },
+  {
+   "move": "star_ac_2025_4",
+   "at": 6.792
+  },
+  {
+   "move": "dans_un_autre_monde_2",
+   "at": 7.245,
+   "lead": 0.078
+  },
+  {
+   "move": "star_ac_2025_5",
+   "at": 7.709,
+   "lead": 0.076
+  },
+  {
+   "move": "dans_un_autre_monde_8",
+   "at": 8.638,
+   "lead": 0.138
+  },
+  {
+   "move": "star_ac_2025_6",
+   "at": 9.334,
+   "lead": -0.033
+  },
+  {
+   "move": "star_ac_2025_7",
+   "at": 9.799,
+   "lead": -0.034
+  },
+  {
+   "move": "star_ac_2025_8",
+   "at": 10.704,
+   "lead": 0.137
+  },
+  {
+   "move": "dans_un_autre_monde_4",
+   "at": 11.865,
+   "lead": -0.035
+  },
+  {
+   "move": "star_ac_2025_9",
+   "at": 12.33,
+   "lead": -0.37
+  },
+  {
+   "move": "dans_un_autre_monde_12",
+   "at": 12.794,
+   "lead": 0.494
+  },
+  {
+   "move": "dans_un_autre_monde_13",
+   "at": 13.259,
+   "lead": 0.092
+  },
+  {
+   "move": "star_ac_2025_10",
+   "at": 13.723,
+   "lead": 0.09
+  },
+  {
+   "move": "dans_un_autre_monde_12",
+   "at": 14.176,
+   "lead": 0.076
+  },
+  {
+   "move": "dans_un_autre_monde_4",
+   "at": 14.629,
+   "lead": 0.062
+  },
+  {
+   "move": "dans_un_autre_monde_1",
+   "at": 15.325,
+   "lead": 0.158
+  },
+  {
+   "move": "dans_un_autre_monde_9",
+   "at": 15.557,
+   "lead": 0.057
+  },
+  {
+   "move": "clap",
+   "at": 16.01,
+   "lead": 0.11
+  },
+  {
+   "move": "dans_un_autre_monde_4",
+   "at": 16.463,
+   "lead": 0.096
+  },
+  {
+   "move": "star_ac_2025_11",
+   "at": 17.055,
+   "lead": 0.222
+  },
+  {
+   "move": "clap",
+   "at": 17.647,
+   "lead": 0.147
+  },
+  {
+   "move": "dans_un_autre_monde_12",
+   "at": 18.553,
+   "lead": 0.253
+  },
+  {
+   "move": "star_ac_2025_12",
+   "at": 18.994,
+   "lead": 0.227
+  },
+  {
+   "move": "dans_un_autre_monde_8",
+   "at": 19.714,
+   "lead": 0.214
+  }
+ ]
+}

@@ -1,6 +1,7 @@
 {% set steps = result.script.steps %}
 <div class="result-card">
-  <p class="result-label">{{ result.script.name }} &middot; {{ steps | length }} moves</p>
+  <p class="result-label">{{ result.script.name }} &middot; {{ steps | length }} moves
+    {%- if result.speed != 1 %} &middot; practice at {{ result.speed }}&times;{% endif %}</p>
 
   {% if result.has_winner %}
   <div class="winner-banner">
@@ -36,10 +37,10 @@
         {% set i = loop.index0 %}
         <tr>
           <td class="score-move">
-            <img src="static/avatars/{{ step.move }}.svg" alt="">
+            <img src="{{ url_prefix }}/static/avatars/{{ step.move }}.svg" alt="">
             <span>{{ move_label(step.move) }}</span>
           </td>
-          <td class="score-beat">{{ '%.1f' | format(step.at) }}s</td>
+          <td class="score-beat">{{ '%.2f' | format(step.at) }}s</td>
           {% for p in result.players %}
           {% set hit = p.hits[i] %}
           <td class="score-cell rating-{{ hit.rating | lower }}">
@@ -67,7 +68,7 @@
 
   {% if result.winner_image %}
   <div class="winner-photo">
-    <img src="static/snapshots/{{ result.winner_image }}" alt="{{ result.winner_player.name }} boxed as the winner">
+    <img src="{{ url_prefix }}/static/snapshots/{{ result.winner_image }}" alt="{{ result.winner_player.name }} boxed as the winner">
   </div>
   {% endif %}
 

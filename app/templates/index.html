@@ -5,6 +5,8 @@
 <div class="form-card">
   <form method="POST" enctype="multipart/form-data" id="form">
     <input type="file" id="video" name="video" accept="video/*" hidden>
+    <!-- When song time 0 played in the recording: measured against the music -->
+    <input type="hidden" id="audio_offset" name="audio_offset" value="0">
 
     {% include "_script_picker.html" %}
 
@@ -20,14 +22,13 @@
     </button>
     <p class="record-hint">
       3-2-1, then do each move when its avatar reaches the line &middot;
+      mirror the avatar, like a dance teacher facing you &middot;
       <span id="script-duration"></span>s &middot; auto-submits
     </p>
   </form>
 </div>
 
-{% if result %}
-{% include "_result.html" %}
-{% endif %}
+
 
 <!-- Fullscreen dance stage: mirrored camera + avatar lane across the top -->
 <div class="stage" id="stage">
@@ -62,12 +63,23 @@
 
 <script>
 const PAYLOAD   = {{ payload | tojson }};
-const LEAD      = PAYLOAD.lead;  // s an avatar takes from the right edge to the line
+const PREFIX    = {{ url_prefix | tojson }};
+// All stage timing below is in SONG time (seconds of music), which runs at `speed`
+// song-seconds per real second: slow practice stretches everything, avatar travel
+// included.
+const LEAD      = PAYLOAD.lead;  // song-s an avatar takes from the right edge to the line
 const HIT_X     = 0.10;          // hit line position, fraction of the lane width
-const HOLD      = 0.3;           // s an avatar lingers on the line, fading out
+const HOLD      = 0.3;           // song-s an avatar lingers on the line, fading out
 const COUNTDOWN = 3;
+const CROWD     = 1.0;           // song-s: closer neighbours make avatars shrink and stagger
+const MIN_SCALE = 0.6;           // smallest avatar, for the densest moves
+const STAGGER   = 0.28;          // lane heights the second row of a crowd sits lower
+const OFFSET_SAMPLES = 90;       // music clock readings kept for the running median
+const FADE_MS   = 500;           // music fade-out when the recording stops
 
 const scriptField = document.getElementById('script');
+const speedField  = document.getElementById('speed');
+const offsetField = document.getElementById('audio_offset');
 const startBtn    = document.getElementById('start-btn');
 const stage       = document.getElementById('stage');
 const lane        = document.getElementById('lane');
@@ -85,12 +97,50 @@ hitLine.style.left = (HIT_X * 100) + '%';
 nextPanel.style.left = `max(12px, calc(${HIT_X * 100}% - 9vh))`;
 
 function currentScript() { return PAYLOAD.scripts[scriptField.value]; }
+function currentSpeed()  { return +speedField.value || 1; }
 
 function showDuration() {
-  document.getElementById('script-duration').textContent = Math.round(currentScript().end);
+  document.getElementById('script-duration').textContent =
+    Math.round(currentScript().end / currentSpeed());
 }
 scriptField.addEventListener('change', showDuration);
+speedField.addEventListener('change', showDuration);
 showDuration();
+
+/* -- Music -- */
+let audio = null;
+
+async function prepareAudio(script, speed) {
+  if (!script.audio) return null;
+  const a = new Audio(script.audio);
+  a.preload = 'auto';
+  a.defaultPlaybackRate = a.playbackRate = speed;
+  a.preservesPitch = a.mozPreservesPitch = a.webkitPreservesPitch = true;
+  // Start and stop it silently while the click still counts as a user gesture,
+  // so the real start, seconds later, isn't blocked by autoplay rules.
+  a.muted = true;
+  try { await a.play(); } catch (_) {}
+  a.pause();
+  a.currentTime = 0;
+  a.muted = false;
+  await new Promise(done => {
+    if (a.readyState >= 4) return done();
+    a.addEventListener('canplaythrough', done, { once: true });
+    setTimeout(done, 8000);  // play anyway; the clock follows the music either way
+  });
+  return a;
+}
+
+function fadeOut(a) {
+  if (!a) return;
+  const step = a.volume / (FADE_MS / 50);
+  const timer = setInterval(() => {
+    a.volume = Math.max(0, a.volume - step);
+    if (a.volume === 0) { a.pause(); clearInterval(timer); }
+  }, 50);
+}
+
+const median = xs => [...xs].sort((x, y) => x - y)[Math.floor(xs.length / 2)];
 
 /* -- Camera / recording -- */
 let mediaRecorder  = null;
@@ -101,7 +151,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function startDance() {
   const script = currentScript();
+  const speed  = currentSpeed();
   startBtn.disabled = true;
+  startBtn.textContent = script.audio ? 'Loading the music...' : 'Starting camera...';
+  audio = await prepareAudio(script, speed);
   startBtn.textContent = 'Starting camera...';
 
   try {
@@ -132,15 +185,36 @@ async function startDance() {
   mediaRecorder = new MediaRecorder(cameraStream, mime ? { mimeType: mime } : {});
   mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
   mediaRecorder.onstop = submitRecording;
-  // The script clock starts with the recording, so script t=0 is video t=0.
+
+  // Clock: w = real seconds since the recording started; `offset` = the w at which
+  // song time 0 plays. A silent pre-roll lets the first avatars slide in from the
+  // edge before the music; once it plays, `offset` is re-measured from the music's
+  // own clock (running median), and that measured value goes to the server so
+  // the scoring uses exactly the timeline the player saw.
+  const preroll = Math.max(0, LEAD - script.steps[0].at);  // song-s
+  let offset = preroll / speed;
+  const samples = [];
+  let musicOn = false, lastReading = -1;
   mediaRecorder.onstart = () => {
     const t0 = performance.now();
     recBadge.classList.add('visible');
     requestAnimationFrame(function tick(now) {
-      const t = (now - t0) / 1000;
-      drawAvatars(avatars, t);
-      showNext(script.steps, t);
-      if (t >= script.end) {
+      const w = (now - t0) / 1000;
+      if (audio && !musicOn && w >= offset) {
+        musicOn = true;
+        audio.play().catch(() => {});
+      }
+      if (musicOn && !audio.paused && audio.currentTime > 0 && audio.currentTime !== lastReading) {
+        lastReading = audio.currentTime;
+        samples.push(w - audio.currentTime / speed);
+        if (samples.length > OFFSET_SAMPLES) samples.shift();
+        offset = median(samples);
+      }
+      const s = (w - offset) * speed;  // song time
+      drawAvatars(avatars, s);
+      showNext(script.steps, s);
+      if (s >= script.end) {
+        offsetField.value = offset.toFixed(4);
         mediaRecorder.stop();
         closeStage();
       } else {
@@ -154,12 +228,23 @@ async function startDance() {
 /* -- Avatar lane -- */
 function buildAvatars(script) {
   lane.querySelectorAll('.lane-avatar').forEach(el => el.remove());
-  return script.steps.map(step => {
+  const steps = script.steps;
+  let row = 0;
+  return steps.map((step, i) => {
     const el = document.createElement('div');
     el.className = 'lane-avatar';
-    el.innerHTML = `<img src="static/avatars/${step.move}.svg" alt=""><span>${step.label}</span>`;
+    el.innerHTML = `<img src="${PREFIX}/static/avatars/${step.move}.svg" alt=""><span></span>`;
+    el.querySelector('span').textContent = step.label;
     lane.appendChild(el);
-    return { step, el, hit: false };
+    // Dense moves: shrink with the gap to the nearest neighbour, and alternate
+    // two rows so close avatars don't hide each other.
+    const gap = Math.min(i ? step.at - steps[i - 1].at : Infinity,
+                         i + 1 < steps.length ? steps[i + 1].at - step.at : Infinity);
+    const crowded = gap < CROWD;
+    row = crowded ? 1 - row : 0;
+    return { step, el, hit: false,
+             scale: Math.max(MIN_SCALE, Math.min(1, gap / CROWD)),
+             dy: crowded && row ? STAGGER : 0 };
   });
 }
 
@@ -167,14 +252,16 @@ function drawAvatars(avatars, t) {
   const width = lane.clientWidth;
   const hitX  = width * HIT_X;
   for (const a of avatars) {
-    const dt = a.step.at - t;  // seconds until this avatar's beat
+    const dt = a.step.at - t;  // song-seconds until this avatar's beat
     if (dt > LEAD || dt < -HOLD) {
       a.el.style.opacity = 0;
       continue;
     }
     // Constant speed from the right edge (dt = LEAD) to the hit line (dt = 0).
     const x = dt > 0 ? hitX + (dt / LEAD) * (width - hitX) : hitX;
-    a.el.style.transform = `translateX(${x - a.el.offsetWidth / 2}px)`;
+    a.el.style.transform = `translate(${x - a.el.offsetWidth / 2}px, ` +
+      `${a.dy * lane.clientHeight}px) scale(${a.scale})`;
+    a.el.style.zIndex    = Math.round(1000 - dt * 100);  // the next beat on top
     a.el.style.opacity   = dt > 0 ? 1 : 1 + dt / HOLD;
     if (dt <= 0 && !a.hit) {
       a.hit = true;
@@ -200,11 +287,12 @@ function showNext(steps, t) {
 function fillNextSlot(slot, step) {
   slot.hidden = !step;
   if (!step) return;
-  slot.querySelector('img').src = `static/avatars/${step.move}.svg`;
+  slot.querySelector('img').src = `${PREFIX}/static/avatars/${step.move}.svg`;
   slot.querySelector('.next-name').textContent = step.label;
 }
 
 function closeStage() {
+  fadeOut(audio);
   recBadge.classList.remove('visible');
   stage.classList.remove('active');
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});

@@ -4,14 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}MoveMatch{% endblock %}</title>
-    <link rel="stylesheet" href="static/style.css">
+    <link rel="stylesheet" href="{{ url_prefix }}/static/style.css">
 </head>
 <body>
-  <div class="container">
+  <div class="container {% block container_class %}{% endblock %}">
     <nav class="app-nav">
       <a href="{{ url_prefix }}/" class="nav-link">Play</a>
       <a href="{{ url_prefix }}/leaderboard" class="nav-link">Leaderboard</a>
       <a href="{{ url_prefix }}/test" class="nav-link">Test</a>
+      <a href="{{ url_prefix }}/create" class="nav-link">Create</a>
     </nav>
 
     <header class="app-header">

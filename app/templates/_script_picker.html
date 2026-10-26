@@ -1,21 +1,37 @@
 <input type="hidden" name="script" id="script" value="{{ script.id }}">
+<input type="hidden" name="speed" id="speed" value="{{ speed | default('1') }}">
 <div class="field-group">
   <span class="field-label">Choreography</span>
   <div class="script-picker">
     {% for s in scripts.values() %}
+    {% set length = s.duration or (s.steps[-1].at + 1) %}
     <button type="button" class="script-btn {{ 'active' if s.id == script.id }}" data-script="{{ s.id }}">
-      <span class="script-name">{{ s.name }}</span>
-      <span class="script-count">{{ s.steps | length }} moves</span>
+      <span class="script-name">{% if s.audio %}<span class="script-music" title="Plays with music">&#9835;</span> {% endif %}{{ s.name }}</span>
+      <span class="script-count">{{ s.steps | length }} moves &middot; {{ '%d:%02d' | format(length // 60, length % 60) }}</span>
+    </button>
+    {% endfor %}
+  </div>
+</div>
+<div class="field-group">
+  <span class="field-label">Speed</span>
+  <div class="speed-picker">
+    {% for v in [1, 0.75, 0.5] %}
+    <button type="button" class="speed-btn {{ 'active' if (speed | default('1') | float) == v }}" data-speed="{{ v }}">
+      {{ v }}&times;{% if v != 1 %} <small>practice</small>{% endif %}
     </button>
     {% endfor %}
   </div>
 </div>
 <script>
-/* -- Script picker: mirrors the choice into the hidden #script input (fires 'change') -- */
-document.querySelectorAll('.script-btn').forEach(btn => btn.addEventListener('click', () => {
-  document.querySelectorAll('.script-btn').forEach(b => b.classList.toggle('active', b === btn));
-  const field = document.getElementById('script');
-  field.value = btn.dataset.script;
-  field.dispatchEvent(new Event('change'));
-}));
+/* -- Script + speed pickers: mirror the choice into the hidden inputs (fire 'change') -- */
+function pickerGroup(btnClass, fieldId, key) {
+  document.querySelectorAll(btnClass).forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll(btnClass).forEach(b => b.classList.toggle('active', b === btn));
+    const field = document.getElementById(fieldId);
+    field.value = btn.dataset[key];
+    field.dispatchEvent(new Event('change'));
+  }));
+}
+pickerGroup('.script-btn', 'script', 'script');
+pickerGroup('.speed-btn', 'speed', 'speed');
 </script>

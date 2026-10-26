@@ -3,13 +3,13 @@
 Deterministic and on-device. Every sampled frame is letterboxed to 640x640 and run
 through YOLOv8n-pose (ONNX, via OpenCV's ``cv2.dnn`` on CPU). Each detection above
 the confidence threshold yields a person box plus the 17 COCO keypoints in original
-pixel coordinates; overlapping boxes are dropped with NMS and people are tracked
-left -> right by their horizontal position.
+pixel coordinates; overlapping boxes are dropped with NMS.
 
-Keypoint geometry then classifies a small set of gestures per person per frame. The
-result is, for every player, the times at which each gesture was seen; dance.py turns
-those into timing scores against a script. The winner box comes from the same pose
-detection, so box and timing always agree -- no GPU or tracker service involved.
+Tracking is deliberately simple: the camera is static, nobody walks in, and players
+mostly dance in place, so each detection joins the slot whose horizontal position
+is nearest, and slots are numbered left -> right. Each slot keeps its normalized
+pose per sampled frame; poses.py decides which frames match a move. The winner box
+comes from the same detections, so box and timing always agree.
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ import logging
 import os
 import threading
 import urllib.request
-from math import hypot
 from pathlib import Path
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -37,8 +37,9 @@ INPUT_SIZE = 640
 CONF_THRESH = 0.5      # person detection confidence
 NMS_THRESH = 0.45
 KP_CONF = 0.30         # per-keypoint confidence gate
-SAMPLE_FPS = 10        # frames per second actually inferred (~0.1 s timing resolution)
-MAX_FRAMES = 360       # hard cap on processed frames (CPU budget)
+SAMPLE_FPS = 15        # frames per second actually inferred (~0.07 s timing resolution)
+MATCH_DX = 0.12        # a detection joins the nearest slot within this share of the width
+MIN_FRAMES = 2         # shorter tracks are noise, not players
 
 # COCO keypoint indices.
 NOSE = 0
@@ -48,18 +49,6 @@ L_WRI, R_WRI = 9, 10
 L_HIP, R_HIP = 11, 12
 L_KNE, R_KNE = 13, 14
 L_ANK, R_ANK = 15, 16
-
-# Human-readable labels for the gestures the geometry can classify.
-ACTION_LABELS = {
-    "arms_crossed": "arms crossed",
-    "clap": "clapping",
-    "hands_on_head": "hands on head",
-    "raise_one_arm": "one arm raised",
-    "crouch": "crouching",
-    "touch_knee": "touching a knee",
-    "wave": "waving",
-    "point_camera": "pointing at camera",
-}
 
 _net: cv2.dnn.Net | None = None
 # cv2.dnn.Net isn't thread-safe; waitress serves requests on threads.
@@ -137,120 +126,34 @@ def _infer(frame) -> list[dict]:
     return dets
 
 
-# -- Gesture classification ---------------------------------------------------
+# -- Tracking -----------------------------------------------------------------
 
-def _ok(kpts, *idxs) -> bool:
-    return all(kpts[i][2] >= KP_CONF for i in idxs)
+def _extract(video_path, progress: Callable[[float], None] | None = None):
+    """Sample the clip at SAMPLE_FPS, detect every person, track them left -> right.
 
-
-def _classify(kpts) -> set[str]:
-    """Gestures visible in a single person's keypoints. Margins are normalized by
-    shoulder width so the rules are scale-invariant."""
-    acts: set[str] = set()
-    if not _ok(kpts, L_SHO, R_SHO):
-        return acts
-
-    ls, rs = kpts[L_SHO], kpts[R_SHO]
-    lw, rw = kpts[L_WRI], kpts[R_WRI]
-    le, re = kpts[L_ELB], kpts[R_ELB]
-    lk, rk = kpts[L_KNE], kpts[R_KNE]
-    la, ra = kpts[L_ANK], kpts[R_ANK]
-    lh, rh = kpts[L_HIP], kpts[R_HIP]
-    nose = kpts[NOSE]
-
-    sw = hypot(ls[0] - rs[0], ls[1] - rs[1]) or 1.0
-    scx, scy = (ls[0] + rs[0]) / 2, (ls[1] + rs[1]) / 2
-    if _ok(kpts, L_HIP, R_HIP):
-        hcx, hcy = (lh[0] + rh[0]) / 2, (lh[1] + rh[1]) / 2
-    else:
-        hcx, hcy = scx, scy + 1.5 * sw
-    head = nose if nose[2] >= KP_CONF else (scx, scy - 0.5 * sw)
-    wrists = [w for w in (lw, rw) if w[2] >= KP_CONF]
-
-    # Hands on / touching head: a wrist near the head and above the shoulders.
-    for w in wrists:
-        if hypot(w[0] - head[0], w[1] - head[1]) < 0.9 * sw and w[1] < scy:
-            acts.add("hands_on_head")
-
-    # Clap: both wrists close together, near chest center, raised above the elbows.
-    if lw[2] >= KP_CONF and rw[2] >= KP_CONF:
-        wd = hypot(lw[0] - rw[0], lw[1] - rw[1])
-        midx, midy = (lw[0] + rw[0]) / 2, (lw[1] + rw[1]) / 2
-        above_elbows = _ok(kpts, L_ELB, R_ELB) and lw[1] < le[1] and rw[1] < re[1]
-        if (wd < 0.5 * sw and abs(midx - scx) < 0.5 * sw
-                and scy < midy < hcy and above_elbows):
-            acts.add("clap")
-
-    # Arms crossed: both forearms roughly horizontal, wrists gathered at the
-    # chest center but spread apart (distinguishes from a clap's tight V).
-    if _ok(kpts, L_WRI, R_WRI, L_ELB, R_ELB) and "clap" not in acts:
-        midy = (lw[1] + rw[1]) / 2
-        horiz = abs(lw[1] - le[1]) < 0.5 * sw and abs(rw[1] - re[1]) < 0.5 * sw
-        span = abs(lw[0] - rw[0])
-        if (horiz and scy < midy < hcy
-                and abs((lw[0] + rw[0]) / 2 - scx) < 0.6 * sw
-                and 0.2 * sw < span < 1.3 * sw):
-            acts.add("arms_crossed")
-
-    # One arm raised (also counts as a wave -- best effort without motion).
-    raised = 0
-    if lw[2] >= KP_CONF and lw[1] < ls[1] - 0.4 * sw:
-        raised += 1
-    if rw[2] >= KP_CONF and rw[1] < rs[1] - 0.4 * sw:
-        raised += 1
-    if raised == 1:
-        acts.add("raise_one_arm")
-        acts.add("wave")
-
-    # Crouch: thighs compressed -- hips drop close to the knees.
-    if _ok(kpts, L_HIP, R_HIP, L_KNE, R_KNE, L_ANK, R_ANK):
-        thigh = ((lk[1] - lh[1]) + (rk[1] - rh[1])) / 2
-        shin = ((la[1] - lk[1]) + (ra[1] - rk[1])) / 2
-        if shin > 1e-3 and thigh < 0.5 * shin:
-            acts.add("crouch")
-
-    # Touching a knee: a wrist near a knee joint.
-    for w in wrists:
-        for k in (lk, rk):
-            if k[2] >= KP_CONF and hypot(w[0] - k[0], w[1] - k[1]) < 0.7 * sw:
-                acts.add("touch_knee")
-
-    # Pointing at the camera: an arm extended roughly horizontally, far out.
-    for w, s in ((lw, ls), (rw, rs)):
-        if w[2] >= KP_CONF and abs(w[1] - s[1]) < 0.5 * sw and abs(w[0] - s[0]) > 1.1 * sw:
-            acts.add("point_camera")
-
-    return acts
-
-
-# -- Tracking + timeline ------------------------------------------------------
-
-def _extract(video_path):
-    """Sample the clip, detect + classify per frame, and track people left->right.
-
-    Returns ``(slots, num_people)`` where each slot is
-    ``{"cx", "frames", "track": [(t, box)], "actions": {action: [t, ...]}}``,
-    ordered left -> right.
+    Returns ``(slots, num_people)``: slots ordered left -> right, each
+    ``{"cx", "frames", "track": [(t, box)], "kpts": [(t, raw)],
+    "poses": [(t, pose | None)], "actions": {}}`` where raw is the (17, 3) pixel
+    keypoints and pose its ``poses.normalize``. ``t`` counts from the first frame.
     """
+    import poses  # poses imports this module's constants
+
     cap = cv2.VideoCapture(str(video_path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     step = max(1, round(fps / SAMPLE_FPS))
 
     slots: list[dict] = []
-    processed = 0
     idx = -1
-    while processed < MAX_FRAMES:
+    while True:
         ok, frame = cap.read()
         if not ok:
             break
         idx += 1
         if idx % step:
             continue
-        processed += 1
         t = idx / fps
-        w = frame.shape[1]
-        match_thresh = 0.12 * w
+        match_thresh = MATCH_DX * frame.shape[1]
 
         dets = sorted(_infer(frame), key=lambda d: (d["box"][0] + d["box"][2]) / 2)
         used = set()
@@ -265,7 +168,8 @@ def _extract(video_path):
                 if d < best_d:
                     best, best_d = si, d
             if best is None:
-                slot = {"cx": cx, "frames": 0, "track": [], "actions": {}}
+                slot = {"cx": cx, "frames": 0, "track": [], "kpts": [], "poses": [],
+                        "actions": {}}
                 slots.append(slot)
                 best = len(slots) - 1
             else:
@@ -275,30 +179,16 @@ def _extract(video_path):
 
             slot["frames"] += 1
             slot["track"].append((t, det["box"]))
-            for act in _classify(det["kpts"]):
-                slot["actions"].setdefault(act, []).append(t)
+            slot["kpts"].append((t, det["kpts"]))
+            slot["poses"].append((t, poses.normalize(det["kpts"])))
+        if progress and total:
+            progress(min(1.0, (idx + 1) / total))
     cap.release()
 
     # Drop slots seen too briefly to be a real player.
-    slots = [s for s in slots if s["frames"] >= 2]
+    slots = [s for s in slots if s["frames"] >= MIN_FRAMES]
     slots.sort(key=lambda s: s["cx"])
     return slots, len(slots)
-
-
-def _build_timeline(slots) -> list[tuple]:
-    """Merge each player's per-action detections into readable intervals."""
-    events = []
-    for rank, s in enumerate(slots, start=1):
-        for act, times in s["actions"].items():
-            times = sorted(times)
-            start = prev = times[0]
-            for t in times[1:]:
-                if t - prev > 0.6:
-                    events.append((start, prev, f"Person {rank}: {ACTION_LABELS[act]}"))
-                    start = t
-                prev = t
-            events.append((start, prev, f"Person {rank}: {ACTION_LABELS[act]}"))
-    return sorted(events, key=lambda e: e[0])
 
 
 # -- Snapshot -----------------------------------------------------------------
@@ -334,12 +224,8 @@ def winner_snapshot_yolo(video_path, timestamp, box, out_path, label="WINNER"):
 
 # -- Orchestration ------------------------------------------------------------
 
-def extract_players(video_path) -> tuple[list[dict], int, list[tuple]]:
-    """Track and classify every player in the clip.
-
-    Returns ``(slots, num_people, timeline)``: slots ordered left -> right, each
-    ``{"cx", "frames", "track": [(t, box)], "actions": {action: [t, ...]}}``, plus a
-    readable ``[(start, end, text)]`` detection timeline.
-    """
-    slots, num_people = _extract(video_path)
-    return slots, num_people, _build_timeline(slots)
+def extract_players(video_path, progress: Callable[[float], None] | None = None
+                    ) -> tuple[list[dict], int]:
+    """Track every player in the clip; see ``_extract`` for the slot layout.
+    ``progress`` gets the fraction of the clip read so far."""
+    return _extract(video_path, progress)

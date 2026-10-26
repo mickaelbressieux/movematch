@@ -2,10 +2,11 @@
 {% block title %}Leaderboard — MoveMatch{% endblock %}
 
 {% block content %}
-{% for sid, rows in high_scores.items() %}
+{% for sid, speed, rows in high_scores %}
 {% set s = scripts[sid] %}
 <div class="lb-section">
-  <p class="result-label">{{ s.name }} &middot; {{ s.steps | length }} moves &middot; best scores</p>
+  <p class="result-label">{{ s.name }} &middot; {{ s.steps | length }} moves &middot;
+    {% if speed == 1 %}best scores{% else %}practice at {{ speed }}&times;{% endif %}</p>
   {% if rows %}
   <table class="lb-table">
     <thead>
@@ -36,7 +37,7 @@
   <div class="winner-gallery">
     {% for w in gallery %}
     <figure class="winner-card">
-      <img src="static/snapshots/{{ w.winner_image }}" alt="Winner snapshot" loading="lazy">
+      <img src="{{ url_prefix }}/static/snapshots/{{ w.winner_image }}" alt="Winner snapshot" loading="lazy">
       <figcaption>
         <span class="winner-card-name">🏆 {{ w.winner_name }}</span>
         {% if w.script %}

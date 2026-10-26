@@ -1,0 +1,532 @@
+{% extends "base.html" %}
+
+{% block title %}Create a song script — MoveMatch{% endblock %}
+{% block container_class %}{{ 'wide' if sid }}{% endblock %}
+
+{% block content %}
+
+{% if not sid %}
+<!-- 1. Upload -->
+<div class="form-card">
+  <h2 style="margin-top:0">Create a script from a dance video</h2>
+  <p class="create-hint">
+    Upload a video of the choreography danced once, at full speed, in sync with
+    the song. MoveMatch finds the dancer&rsquo;s key poses and when they happen on
+    the music; you then review them over the video and save the script.
+  </p>
+  <form method="POST" enctype="multipart/form-data" id="create-form">
+    <div class="field-group">
+      <label class="field-label" for="name">Song name</label>
+      <input type="text" id="name" name="name" class="text-input" placeholder="e.g. Dans un autre monde">
+    </div>
+    <div class="field-group">
+      <label class="field-label" for="video">Dance video</label>
+      <input type="file" id="video" name="video" accept="video/*" class="text-input" required>
+      <p class="upload-hint">MP4, MOV, AVI, MKV, WEBM &middot; max 500 MB &middot; analysis takes about
+        2&ndash;3 min per minute of video</p>
+    </div>
+    <button type="submit" class="submit-btn" id="create-btn">Analyse the video</button>
+  </form>
+</div>
+
+{% if projects %}
+<div class="form-card">
+  <p class="field-label">Earlier videos</p>
+  <ul class="project-list">
+    {% for p in projects %}
+    <li><a href="{{ url_prefix }}/create/{{ p.sid }}">{{ p.name }}</a>
+      <span class="project-meta">
+        {% if p.duration %}{{ '%.0f' | format(p.duration) }} s &middot; {% endif %}{{ p.status }}
+      </span></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<script>
+document.getElementById('create-form').addEventListener('submit', () => {
+  const btn = document.getElementById('create-btn');
+  btn.disabled = true;
+  btn.textContent = 'Uploading…';
+});
+</script>
+
+{% else %}
+<!-- 2. Analysis progress -->
+<div class="form-card" id="progress-view">
+  <h2 style="margin-top:0">{{ meta.name }}</h2>
+  <div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
+  <p class="create-hint" id="progress-msg">Starting…</p>
+</div>
+
+<!-- 3. Dancer pick -->
+<div class="form-card" id="pick-view" hidden>
+  <h2 style="margin-top:0">Which dancer should the script follow?</h2>
+  <p class="create-hint">Click the dancer. People are numbered left &rarr; right.</p>
+  <div class="pick-frame" id="pick-frame">
+    <img id="pick-img" alt="A frame of the video with every detected person boxed">
+  </div>
+</div>
+
+<!-- 4. How to build the script -->
+<div class="form-card" id="mode-view" hidden>
+  <h2 style="margin-top:0">How do you want to build the script?</h2>
+  <div class="mode-choices">
+    <button type="button" class="mode-btn" data-mode="manual">
+      <b>Mark by hand</b>
+      <span>Start with an empty timeline. Play the video and press <kbd>Space</kbd>
+        each time the dancer hits a key pose. The detector&rsquo;s suggestions show
+        as faint markers you can click to add.</span>
+    </button>
+    <button type="button" class="mode-btn" data-mode="suggest">
+      <b>Start from suggestions</b>
+      <span>The detected key poses are already on the timeline; delete, move or add
+        moves to fix them.</span>
+    </button>
+  </div>
+  <p class="create-hint">You can switch at any time in the editor; nothing is lost.</p>
+</div>
+
+<!-- 5. Editor -->
+<div id="review-view" hidden>
+  <div class="review-top">
+    <div class="review-video">
+      <video id="video" controls playsinline preload="auto"
+             src="{{ url_prefix }}/create/{{ sid }}/video"></video>
+    </div>
+    <aside class="review-side">
+      <div class="now-next">
+        <div class="nn-slot" id="nn-now"><span class="nn-tag">Now</span><img alt=""><span class="nn-name"></span></div>
+        <div class="nn-slot" id="nn-next"><span class="nn-tag">Next</span><img alt=""><span class="nn-name"></span></div>
+      </div>
+      <div class="selected-move" id="sel-panel" hidden>
+        <p class="field-label">Selected move</p>
+        <div class="sel-row">
+          <img id="sel-img" alt="">
+          <div class="sel-fields">
+            <span id="sel-time" class="sel-time"></span>
+            <label class="field-label" for="sel-label">Pose name</label>
+            <input type="text" id="sel-label" class="text-input" maxlength="40">
+            <span id="sel-uses" class="create-hint"></span>
+          </div>
+        </div>
+        <div class="sel-actions">
+          <button type="button" class="small-btn" id="sel-split" title="Give this move its own pose, captured from this moment">Split into its own pose</button>
+          <button type="button" class="small-btn danger" id="sel-delete">Delete (Del)</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="review-controls">
+    <label>Mode
+      <select id="mode">
+        <option value="manual">Mark by hand</option>
+        <option value="suggest">Suggestions</option>
+      </select>
+    </label>
+    <button type="button" class="small-btn" id="play-btn">Play / pause (K)</button>
+    <label>Speed
+      <select id="speed"><option>0.25</option><option>0.5</option><option>0.75</option><option selected>1</option></select>
+    </label>
+    <button type="button" class="small-btn" id="add-btn">Mark a move here (Space)</button>
+    <label><input type="checkbox" id="snap" checked> Snap to beat</label>
+    <label class="sens">Suggestions
+      <input type="range" id="sens" min="0" max="3" step="0.05">
+      <span id="sens-val"></span>
+    </label>
+    <label>Zoom <input type="range" id="zoom" min="20" max="300" step="10" value="90"></label>
+    <span id="move-count" class="create-hint"></span>
+  </div>
+
+  <div class="timeline-wrap" id="tl-wrap">
+    <div class="timeline" id="timeline">
+      <div class="tl-beats" id="tl-beats"></div>
+      <div class="tl-playhead" id="tl-playhead"></div>
+    </div>
+  </div>
+  <p class="create-hint">
+    <kbd>Space</kbd> mark a move at the playhead &middot; <kbd>K</kbd> play / pause &middot;
+    <kbd>,</kbd> <kbd>.</kbd> step one frame &middot;
+    <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> nudge the selected move one frame &middot;
+    <kbd>Shift</kbd>+<kbd>&larr;</kbd>/<kbd>&rarr;</kbd> previous / next move &middot;
+    <kbd>Del</kbd> delete it &middot; click the timeline to seek, a move to select it, drag
+    it to move it &middot; faint markers are the detector&rsquo;s suggestions (click to add;
+    the Suggestions slider shows more or fewer).
+    Mark the moment the dancer <b>arrives</b> in a pose.
+  </p>
+
+  <div class="form-card save-bar">
+    <div class="field-group">
+      <label class="field-label" for="script-name">Script name</label>
+      <input type="text" id="script-name" class="text-input" value="{{ meta.name }}" maxlength="60">
+    </div>
+    <button type="button" class="submit-btn" id="save-btn">Save the script</button>
+    <p class="create-hint" id="save-msg"></p>
+  </div>
+</div>
+
+<script>
+const PREFIX = {{ url_prefix | tojson }};
+const SID    = {{ sid | tojson }};
+const SNAP_TOL = 0.10;  // s, like choreo.SNAP_TOL
+const NOW_SPAN = 0.25;  // s a move shows as "Now" around its time
+
+const $ = id => document.getElementById(id);
+const video = $('video');
+let R = null;            // review data from the server
+let items = [];          // every move: candidates + moves added by hand
+let poses = {};          // key -> {label, library, kpts, svg}
+let selected = null;     // item
+let sens = 0;
+let pxPerSec = 90;
+let grid = [];           // beats and half-beats
+let frameDur = 1 / 30;
+let splitCount = 0, addedCount = 0;
+let mode = null;         // 'manual': only your moves are real; 'suggest': suggestions too
+
+/* -- Progress, then dancer pick -- */
+async function poll() {
+  const res = await fetch(`${PREFIX}/api/job/${SID}`);
+  if (!res.ok) { $('progress-msg').textContent = 'Unknown video.'; return; }
+  const job = await res.json();
+  $('progress-bar').style.width = (job.progress * 100) + '%';
+  $('progress-msg').textContent = job.status === 'error' ? 'Analysis failed: ' + job.error : job.message;
+  if (job.status === 'running') return setTimeout(poll, 1000);
+  if (job.status === 'done') showPick();
+}
+
+async function showPick() {
+  const people = {{ (meta.people or []) | tojson }};
+  const pick = {{ (meta.pick or {}) | tojson }};
+  const slotParam = new URLSearchParams(location.search).get('slot');
+  // Analysis may have finished after this page was rendered: reload once for its data.
+  if (!people.length) return location.reload();
+  if (slotParam !== null) return loadReview(+slotParam);
+  if (people.length === 1) return loadReview(0);
+  $('progress-view').hidden = true;
+  $('pick-view').hidden = false;
+  $('pick-img').src = `${PREFIX}/create/${SID}/pick.jpg`;
+  pick.boxes.forEach((b, i) => {
+    const el = document.createElement('button');
+    el.className = 'pick-box';
+    el.style.left = (b[0] * 100) + '%';
+    el.style.top = (b[1] * 100) + '%';
+    el.style.width = ((b[2] - b[0]) * 100) + '%';
+    el.style.height = ((b[3] - b[1]) * 100) + '%';
+    el.textContent = i + 1;
+    el.onclick = () => loadReview(i);
+    $('pick-frame').appendChild(el);
+  });
+}
+
+async function loadReview(slot) {
+  $('progress-view').hidden = false;
+  $('pick-view').hidden = true;
+  $('progress-msg').textContent = 'Finding the key poses…';
+  const res = await fetch(`${PREFIX}/api/song/${SID}/review?slot=${slot}`);
+  const data = await res.json();
+  if (!res.ok) { $('progress-msg').textContent = data.error; return; }
+  R = data;
+  poses = data.poses;
+  items = data.candidates.map((c, i) => ({ ...c, idx: i, deleted: false, manual: false }));
+  sens = data.sensitivity;
+  frameDur = 1 / (data.fps || 30);
+  const b = data.beats;
+  grid = b.concat(b.slice(1).map((x, i) => (x + b[i]) / 2)).sort((x, y) => x - y);
+  $('sens').value = sens;
+  $('progress-view').hidden = true;
+  buildBeats();
+  const m = new URLSearchParams(location.search).get('mode');
+  if (m === 'manual' || m === 'suggest') return openEditor(m);
+  $('mode-view').hidden = false;
+}
+
+document.querySelectorAll('.mode-btn').forEach(b => b.onclick = () => openEditor(b.dataset.mode));
+
+function openEditor(m) {
+  setMode(m);
+  $('mode-view').hidden = true;
+  $('review-view').hidden = false;
+  render();
+}
+
+function setMode(m) {
+  mode = m;
+  $('mode').value = m;
+  history.replaceState(null, '', `?slot=${R.slot}&mode=${m}`);
+}
+$('mode').onchange = e => { setMode(e.target.value); render(); };
+
+/* -- Which moves are real -- */
+function suggested() {
+  // The detector's picks at this sensitivity, same rule as choreo.select: score >=
+  // sensitivity, minus a repeat of the previous kept candidate's pose. Moves you
+  // marked, accepted or edited are yours and no longer count as suggestions.
+  const out = [];
+  let lastKept = -1;
+  for (const it of items) {
+    if (it.idx < 0 || it.manual) continue;
+    const on = it.score >= sens && !(lastKept >= 0 && it.dups.includes(lastKept));
+    if (on) { lastKept = it.idx; if (!it.deleted) out.push(it); }
+  }
+  return out;
+}
+
+function visible() {
+  // The script's moves: yours, plus the suggestions when in suggestions mode.
+  const real = items.filter(it => it.manual && !it.deleted);
+  if (mode === 'suggest') real.push(...suggested());
+  return real.sort((a, b) => a.t - b.t);
+}
+
+function ghosts() {
+  return mode === 'manual' ? suggested() : [];
+}
+
+function poseImg(key) {
+  const p = poses[key];
+  if (p.library) return `${PREFIX}/static/avatars/${key}.svg`;
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(p.svg);
+}
+
+function poseName(key) {
+  const p = poses[key];
+  if (p.label) return p.label;
+  const news = Object.keys(poses).filter(k => !poses[k].library);
+  return `Pose ${news.indexOf(key) + 1}`;
+}
+
+/* -- Timeline -- */
+const timeline = $('timeline');
+
+function buildBeats() {
+  const el = $('tl-beats');
+  el.innerHTML = '';
+  R.beats.forEach(t => {
+    const tick = document.createElement('div');
+    tick.className = 'tl-beat';
+    tick.dataset.t = t;
+    el.appendChild(tick);
+  });
+}
+
+function render() {
+  const dur = R.duration || video.duration || 60;
+  timeline.style.width = (dur * pxPerSec + 40) + 'px';
+  $('tl-beats').querySelectorAll('.tl-beat').forEach(t => { t.style.left = (t.dataset.t * pxPerSec) + 'px'; });
+  timeline.querySelectorAll('.tl-move').forEach(m => m.remove());
+  const shown = visible();
+  const faint = new Set(ghosts());
+  [...shown, ...faint].sort((a, b) => a.t - b.t).forEach((it, k) => {
+    const ghost = faint.has(it);
+    const el = document.createElement('div');
+    el.className = 'tl-move' + (it === selected ? ' selected' : '') + (k % 2 ? ' low' : '') +
+      (ghost ? ' ghost' : '');
+    el.style.left = (it.t * pxPerSec) + 'px';
+    el.innerHTML = `<img src="${poseImg(it.pose)}" alt=""><span></span>`;
+    el.title = ghost ? `Suggestion @ ${it.t.toFixed(2)} s: click to add`
+                     : `${poseName(it.pose)} @ ${it.t.toFixed(2)} s`;
+    el.addEventListener('pointerdown', e => startDrag(e, it));
+    timeline.appendChild(el);
+  });
+  $('sens-val').textContent = (+sens).toFixed(2);
+  $('move-count').textContent = `${shown.length} moves · ${new Set(shown.map(i => i.pose)).size} poses` +
+    (mode === 'manual' ? ` · ${faint.size} suggestions` : '');
+  renderSelected();
+  drawPlayhead();
+}
+
+function drawPlayhead() {
+  $('tl-playhead').style.left = (video.currentTime * pxPerSec) + 'px';
+  const shown = visible();
+  const t = video.currentTime;
+  const now = shown.find(i => Math.abs(i.t - t) <= NOW_SPAN);
+  const next = shown.find(i => i.t > t + (now ? NOW_SPAN : 0));
+  fillSlot($('nn-now'), now);
+  fillSlot($('nn-next'), next);
+}
+
+function fillSlot(slot, it) {
+  slot.classList.toggle('empty', !it);
+  slot.querySelector('img').src = it ? poseImg(it.pose) : '';
+  slot.querySelector('.nn-name').textContent = it ? `${poseName(it.pose)} · ${it.t.toFixed(2)} s` : '';
+}
+
+function follow() {
+  drawPlayhead();
+  const wrap = $('tl-wrap');
+  const x = video.currentTime * pxPerSec;
+  if (!video.paused && (x < wrap.scrollLeft || x > wrap.scrollLeft + wrap.clientWidth - 60)) {
+    wrap.scrollLeft = x - 60;
+  }
+  requestAnimationFrame(follow);
+}
+requestAnimationFrame(follow);
+
+function snapT(t) {
+  if (!$('snap').checked || !grid.length) return t;
+  const g = grid.reduce((a, b) => Math.abs(b - t) < Math.abs(a - t) ? b : a);
+  return Math.abs(g - t) <= SNAP_TOL ? g : t;
+}
+
+let drag = null;
+function startDrag(e, it) {
+  e.stopPropagation();
+  if (mode === 'manual') it.manual = true;  // clicking a suggestion makes it yours
+  selected = it;
+  video.currentTime = it.t;
+  drag = { it, x0: e.clientX, t0: it.t, moved: false };
+  render();
+}
+document.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dt = (e.clientX - drag.x0) / pxPerSec;
+  if (Math.abs(e.clientX - drag.x0) > 3) drag.moved = true;
+  if (!drag.moved) return;
+  drag.it.t = Math.max(0, snapT(drag.t0 + dt));
+  drag.it.manual = true;
+  video.currentTime = drag.it.t;
+  render();
+});
+document.addEventListener('pointerup', () => { drag = null; });
+
+timeline.addEventListener('pointerdown', e => {
+  const r = timeline.getBoundingClientRect();
+  video.currentTime = Math.max(0, (e.clientX - r.left) / pxPerSec);
+  selected = null;
+  render();
+});
+
+/* -- Selected move -- */
+function renderSelected() {
+  const panel = $('sel-panel');
+  panel.hidden = !selected;
+  if (!selected) return;
+  $('sel-img').src = poseImg(selected.pose);
+  $('sel-time').textContent = `${selected.t.toFixed(3)} s`;
+  const lab = $('sel-label');
+  if (document.activeElement !== lab) lab.value = poses[selected.pose].label || '';
+  lab.placeholder = poseName(selected.pose);
+  const uses = visible().filter(i => i.pose === selected.pose).length;
+  $('sel-uses').textContent = (poses[selected.pose].library ? 'Library pose · ' : '') +
+    `used by ${uses} move${uses === 1 ? '' : 's'}`;
+  $('sel-split').disabled = uses < 2 || !selected.kpts;
+}
+
+$('sel-label').addEventListener('input', e => {
+  if (!selected) return;
+  poses[selected.pose].label = e.target.value;
+  render();
+});
+
+$('sel-split').onclick = async () => {
+  if (!selected || !selected.kpts) return;
+  const res = await fetch(`${PREFIX}/api/pose_svg`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kpts: selected.kpts }) });
+  const key = `split${++splitCount}`;
+  poses[key] = { label: '', library: false, kpts: selected.kpts, svg: (await res.json()).svg };
+  selected.pose = key;
+  selected.manual = true;
+  render();
+};
+
+$('sel-delete').onclick = deleteSelected;
+function deleteSelected() {
+  if (!selected) return;
+  selected.deleted = true;
+  selected = null;
+  render();
+}
+
+/* -- Adding a move -- */
+async function addMove() {
+  const t = snapT(video.currentTime);
+  const twin = visible().find(i => Math.abs(i.t - t) < 1.5 * frameDur);
+  if (twin) { selected = twin; render(); return; }  // a second press on the same spot
+  const res = await fetch(`${PREFIX}/api/song/${SID}/pose`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slot: R.slot, t: video.currentTime }) });
+  const p = await res.json();
+  if (!res.ok) { alert(p.error); return; }
+  let key = p.library;
+  if (!key) {
+    key = `added${++addedCount}`;
+    poses[key] = { label: '', library: false, kpts: p.kpts, svg: p.svg };
+  } else if (!poses[key]) {
+    poses[key] = { label: '', library: true, kpts: p.kpts, svg: null };
+  }
+  const it = { t, pose: key, kpts: p.kpts, score: Infinity, dups: [], idx: -1,
+               deleted: false, manual: true };
+  items.push(it);
+  selected = it;
+  render();
+}
+$('add-btn').onclick = addMove;
+
+/* -- Controls -- */
+$('play-btn').onclick = () => video.paused ? video.play() : video.pause();
+$('speed').onchange = e => { video.playbackRate = +e.target.value; };
+$('sens').oninput = e => { sens = +e.target.value; render(); };
+$('zoom').oninput = e => { pxPerSec = +e.target.value; render(); };
+
+// Keys as in tools/label.html. Captured before the video element sees them, so
+// Space marks a move instead of toggling the player.
+document.addEventListener('keydown', e => {
+  if (!R || !mode || ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  if (e.key === ' ' || e.key === 'a' || e.key === 'A') { e.preventDefault(); addMove(); }
+  else if (e.key === 'k' || e.key === 'K') { e.preventDefault(); video.paused ? video.play() : video.pause(); }
+  else if (e.key === ',' || e.key === '.') {
+    video.pause();
+    video.currentTime = Math.max(0, video.currentTime + (e.key === '.' ? 1 : -1) * frameDur);
+  }
+  else if (e.key === 'Delete' || e.key === 'Backspace') deleteSelected();
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    const dir = e.key === 'ArrowRight' ? 1 : -1;
+    if (e.shiftKey || !selected) {
+      const shown = visible();
+      const t = selected ? selected.t : video.currentTime;
+      const it = dir > 0 ? shown.find(i => i.t > t + 1e-3) : shown.filter(i => i.t < t - 1e-3).pop();
+      if (it) { selected = it; video.currentTime = it.t; }
+    } else {
+      selected.t = Math.max(0, selected.t + dir * frameDur);
+      selected.manual = true;
+      video.currentTime = selected.t;
+    }
+    render();
+  }
+}, true);
+
+/* -- Save -- */
+$('save-btn').onclick = async () => {
+  const shown = visible();
+  if (!shown.length) { $('save-msg').textContent = 'Nothing to save: no moves.'; return; }
+  const used = [...new Set(shown.map(i => i.pose))];
+  const body = {
+    name: $('script-name').value,
+    slot: R.slot,
+    moves: shown.map(i => ({ t: +i.t.toFixed(3), pose: i.pose })),
+    poses: Object.fromEntries(used.map(k => [k, { label: poses[k].label || poseName(k),
+                                                  kpts: poses[k].library ? null : poses[k].kpts }])),
+  };
+  $('save-btn').disabled = true;
+  $('save-msg').textContent = 'Saving…';
+  const res = await fetch(`${PREFIX}/api/song/${SID}/save`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const out = await res.json();
+  $('save-btn').disabled = false;
+  $('save-msg').innerHTML = res.ok
+    ? `Saved as <b>${out.script}</b> (${shown.length} moves). <a href="${out.play}">Play it</a>`
+    : 'Could not save: ' + out.error;
+};
+
+// A clicked button would otherwise also take the Space key meant for play/pause.
+document.addEventListener('click', e => { if (e.target.tagName === 'BUTTON') e.target.blur(); });
+
+// Analysed already (or made by a tool, without a job): skip the progress poll.
+if ({{ 'true' if meta.people else 'false' }}) showPick(); else poll();
+</script>
+{% endif %}
+{% endblock %}

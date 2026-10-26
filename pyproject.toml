@@ -9,12 +9,13 @@ description = "Follow the avatars, move on the beat, and let AI score your timin
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "flask>=3.0",
+    "flask>=3.1",
     "gunicorn>=22.0; sys_platform != 'win32'",
     "waitress>=3.0",
     "opencv-python>=4.9",
     "numpy>=1.26",
     "imageio-ffmpeg>=0.5",
+    "scipy>=1.11",
 ]
 
 # The app is run from app/ (run.sh or `python app/app.py`), not installed as a

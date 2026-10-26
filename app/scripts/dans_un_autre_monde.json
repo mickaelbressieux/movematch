@@ -1,0 +1,128 @@
+{
+ "id": "dans_un_autre_monde",
+ "name": "Dans un autre monde",
+ "audio": "songs/dans_un_autre_monde.m4a",
+ "duration": 20.26666666666667,
+ "source": "68df223172234deca3222ca03429c591",
+ "steps": [
+  {
+   "move": "clap",
+   "at": 0.801,
+   "lead": 0.034
+  },
+  {
+   "move": "dans_un_autre_monde_1",
+   "at": 2.043,
+   "lead": 0.476
+  },
+  {
+   "move": "dans_un_autre_monde_2",
+   "at": 4.284,
+   "lead": 0.184
+  },
+  {
+   "move": "dans_un_autre_monde_3",
+   "at": 4.795,
+   "lead": 0.095
+  },
+  {
+   "move": "dans_un_autre_monde_2",
+   "at": 5.306,
+   "lead": 0.139
+  },
+  {
+   "move": "dans_un_autre_monde_3",
+   "at": 5.805,
+   "lead": 0.172
+  },
+  {
+   "move": "dans_un_autre_monde_1",
+   "at": 6.316,
+   "lead": 0.149
+  },
+  {
+   "move": "dans_un_autre_monde_4",
+   "at": 6.815,
+   "lead": 0.182
+  },
+  {
+   "move": "dans_un_autre_monde_5",
+   "at": 7.814,
+   "lead": 0.114
+  },
+  {
+   "move": "dans_un_autre_monde_6",
+   "at": 8.812,
+   "lead": 0.245
+  },
+  {
+   "move": "dans_un_autre_monde_7",
+   "at": 9.311,
+   "lead": 0.211
+  },
+  {
+   "move": "dans_un_autre_monde_6",
+   "at": 9.81,
+   "lead": 0.11
+  },
+  {
+   "move": "dans_un_autre_monde_1",
+   "at": 10.31,
+   "lead": 0.077
+  },
+  {
+   "move": "dans_un_autre_monde_8",
+   "at": 11.167,
+   "lead": 0.067
+  },
+  {
+   "move": "dans_un_autre_monde_9",
+   "at": 11.7,
+   "lead": 0.067
+  },
+  {
+   "move": "dans_un_autre_monde_6",
+   "at": 12.167
+  },
+  {
+   "move": "dans_un_autre_monde_10",
+   "at": 12.806,
+   "lead": 0.239
+  },
+  {
+   "move": "dans_un_autre_monde_6",
+   "at": 13.305,
+   "lead": 0.138
+  },
+  {
+   "move": "dans_un_autre_monde_11",
+   "at": 13.7,
+   "lead": 0.2
+  },
+  {
+   "move": "dans_un_autre_monde_7",
+   "at": 14.303,
+   "lead": 0.07
+  },
+  {
+   "move": "dans_un_autre_monde_4",
+   "at": 14.559,
+   "lead": 0.126
+  },
+  {
+   "move": "dans_un_autre_monde_9",
+   "at": 14.803,
+   "lead": 0.036
+  },
+  {
+   "move": "dans_un_autre_monde_12",
+   "at": 16.7,
+   "lead": 0.267
+  },
+  {
+   "move": "dans_un_autre_monde_13",
+   "at": 19.307,
+   "lead": 0.074
+  }
+ ]
+}
